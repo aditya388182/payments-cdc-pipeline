@@ -1,0 +1,30 @@
+{
+  "name": "payments-postgres-cdc",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "postgres",
+    "database.port": "5432",
+    "database.user": "payments",
+    "database.password": "payments",
+    "database.dbname": "payments",
+    "topic.prefix": "payments",
+    "plugin.name": "pgoutput",
+    "slot.name": "debezium_payments_slot",
+    "publication.name": "debezium_payments_pub",
+    "publication.autocreate.mode": "filtered",
+    "table.include.list": "public.transactions",
+    "decimal.handling.mode": "precise",
+    "tombstones.on.delete": "true",
+    "message.key.columns": "public.transactions:transaction_id",
+    "heartbeat.interval.ms": "10000",
+    "heartbeat.action.query": "UPDATE debezium_heartbeat SET last_beat=now() WHERE id=1",
+    "key.converter": "io.confluent.connect.avro.AvroConverter",
+    "value.converter": "io.confluent.connect.avro.AvroConverter",
+    "key.converter.schema.registry.url": "http://schema-registry:8081",
+    "value.converter.schema.registry.url": "http://schema-registry:8081",
+    "errors.tolerance": "all",
+    "errors.deadletterqueue.topic.name": "connect-dlq",
+    "errors.deadletterqueue.topic.replication.factor": "1",
+    "errors.deadletterqueue.context.headers.enable": "true"
+  }
+}
