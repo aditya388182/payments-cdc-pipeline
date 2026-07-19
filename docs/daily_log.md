@@ -234,6 +234,45 @@ All Day 1 files listed above
 Updated docs/daily_log.md with verification results
 Git commit for Day 1 work
 
+Day 1 Runtime Bug — Encountered & Resolved
+Status: RESOLVED during Day 1 verification, before Day 2 began.
+The Problem
+During Step 5 of the Verification Checklist (registering the Debezium connector), the connector failed to register — Kafka Connect's /connectors REST API behaved as if the Debezium PostgreSQL connector class did not exist, even though the plugin install step had run without an explicit error.
+Root Cause
+infra/docker-compose.yml, in the connect service's command block, had:
+yamlconfluent-hub install --no-prompt debezium/debezium-connector-postgresql:latest
+:latest resolved to Debezium 3.x, which requires a Java 17 runtime (confirmed via Debezium's own 3.0 release notes: "Debezium connectors now require Java 17 for runtime and Java 21 for building"). The confluentinc/cp-kafka-connect:7.6.1 image is from the Confluent Platform 7.x generation, which runs on Java 11 — it predates Confluent's later Temurin 21/25 upgrade path (that only started at CP 8.0+).
+The failure mode was silent — no bytecode error, no obvious log line. This is a documented, known behavior: Red Hat's own Debezium 3.0 release notes state "If you use Java 11 with new connectors, Kafka Connect silently fails to find the connector. The connector does not report any bytecode errors." Kafka Connect's plugin scanner simply discarded the incompatible jar during JVM startup and finished booting without it, which is why the REST API behaved as though the class was missing rather than throwing a clear version-mismatch error.
+Diagnosis Process
+
+Verified the actual current content of docker-compose.yml via grep rather than assuming — confirmed the file said :latest.
+Cross-checked the failure signature against Debezium/Red Hat's official documentation to confirm this was a known Java-version incompatibility, not a different underlying issue (network failure, plugin path misconfiguration, etc.).
+Ruled out alternative causes before applying a fix, to avoid a second cycle of blind trial-and-error.
+
+The Fix
+Pinned the connector install to a Java-11-compatible release instead of :latest:
+yamlconfluent-hub install --no-prompt debezium/debezium-connector-postgresql:2.5.4
+Applied and verified with:
+bashdocker compose up -d --force-recreate connect
+until curl -sf http://localhost:8083/connectors >/dev/null 2>&1; do sleep 5; done
+curl -s http://localhost:8083/connector-plugins | python3 -m json.tool | grep -A2 "Postgres"
+Confirmed the correct version loaded:
+json"class": "io.debezium.connector.postgresql.PostgresConnector",
+"type": "source",
+"version": "2.5.4.Final"
+Then registered and confirmed RUNNING:
+bashcurl -X POST http://localhost:8083/connectors \
+  -H "Content-Type: application/json" \
+  -d @connectors/debezium-postgres-connector.json
+Result: both connector.state and tasks[0].state returned "RUNNING".
+Fix Committed
+Landed on branch feature/day1-infra-capture (1-line change to infra/docker-compose.yml; infra/kafka/topics.sh also picked up an executable-permission fix in the same pull).
+Recommended commit message (if not already used):
+fix: pin debezium connector to 2.5.4 — :latest resolved to debezium 3.x,
+which requires java 17 and silently fails to load on the java-11-based
+cp-kafka-connect:7.6.1 image
+Lesson for Future Days
+Never leave a :latest tag in a provisioning script that gets re-executed on every container restart (the command: block in Compose runs fresh each time) — a floating tag means "works today" can silently become "broken tomorrow" with zero diff in your own repo. Every image/plugin version in this project should be pinned to an explicit, tested version going forward.
 
 End of Memory Carry Forward (MCF) Doc – Day 1
 This document was generated at the conclusion of Day 1 configuration work. It is designed to allow a completely new AI session to continue seamlessly with minimal context loss.
