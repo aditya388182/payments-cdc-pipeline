@@ -1,0 +1,9 @@
+# Database Driver for PostgreSQL
+psycopg2-binary==2.9.9
+
+# API and Schema Registry Communication
+requests==2.32.3
+
+# Spark and Delta Lake 
+pyspark==3.5.1
+delta-spark==3.2.0
