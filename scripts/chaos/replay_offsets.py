@@ -17,20 +17,25 @@ from spark.jobs.payments_cdc_job import (
 
 def read_kafka_range(
     spark: SparkSession,
-    starting_offsets: str,
-    ending_offsets: str,
+    starting_offsets: str = "earliest",
+    ending_offsets: str | None = None,
 ) -> DataFrame:
     """Batch-read a closed offset range from the CDC topic."""
-    return (
+    reader = (
         spark.read
         .format("kafka")
         .option("kafka.bootstrap.servers", "localhost:29092")
         .option("subscribe", "payments.public.transactions")
         .option("startingOffsets", starting_offsets)
-        .option("endingOffsets", ending_offsets)
         .option("failOnDataLoss", "false")
-        .load()
     )
+    
+    if ending_offsets:
+        reader = reader.option("endingOffsets", ending_offsets)
+    else:
+        reader = reader.option("endingOffsets", "latest")  # snapshot to current end
+        
+    return reader.load()
 
 
 def snapshot_metrics(spark: SparkSession) -> tuple[int, int]:
@@ -45,7 +50,7 @@ def snapshot_metrics(spark: SparkSession) -> tuple[int, int]:
     return cnt, int(total)
 
 
-def run_lsn_guard_test(spark: SparkSession, start_off: str, end_off: str) -> None:
+def run_lsn_guard_test(spark: SparkSession, start_off: str, end_off: str | None) -> None:
     print("\n=== LSN-GUARD REPLAY TEST (commit=False, batch_id=999_999_999) ===")
 
     raw = read_kafka_range(spark, start_off, end_off)
@@ -88,7 +93,7 @@ def run_ledger_skip_test(spark: SparkSession, already_committed_batch_id: int) -
     if after_cnt != before_cnt or after_sum != before_sum:
         raise AssertionError("Ledger skip path wrote data — this must never happen")
 
-    print(f"LEDGER SKIP TEST: batch {already_committed_batch_id} correctly ignored ✅")
+    print(f"LEDGER SKIP TEST: batch {already_committed_batch_id} correctly ignored")
 
 
 def main() -> None:
@@ -101,13 +106,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--start-offsets",
-        default='{"payments.public.transactions":{"0":0}}',
-        help="Kafka startingOffsets JSON (single partition)",
+        default="earliest",
+        help="Kafka startingOffsets (defaults to earliest)",
     )
     parser.add_argument(
         "--end-offsets",
-        default='{"payments.public.transactions":{"0":500}}',
-        help="Kafka endingOffsets JSON (must be already processed)",
+        default=None,
+        help="Kafka endingOffsets (defaults to latest snapshot)",
     )
     parser.add_argument(
         "--known-batch-id",
