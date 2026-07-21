@@ -1,4 +1,8 @@
 from pyspark.sql import functions as F
+from spark.jobs.payments_cdc_job import build_spark, TABLE_PATH
+
+# Build the Spark session using your project's helper
+spark = build_spark("check-phantom")
 
 pg = (spark.read.format("jdbc")
       .option("url", "jdbc:postgresql://localhost:5432/payments")
@@ -6,7 +10,7 @@ pg = (spark.read.format("jdbc")
       .option("password", "payments").option("driver", "org.postgresql.Driver")
       .load().select(F.col("transaction_id").cast("string").alias("transaction_id")))
 
-delta_all = spark.read.format("delta").load("s3a://payments-lake/transactions")
+delta_all = spark.read.format("delta").load(TABLE_PATH)
 
 # dtypes on both sides — must BOTH be string
 pg.select("transaction_id").printSchema()
@@ -26,3 +30,5 @@ if phantom:
     delta_all.filter(F.col("transaction_id") == tid).show(truncate=False)
 else:
     print("no phantoms found right now")
+
+spark.stop()
