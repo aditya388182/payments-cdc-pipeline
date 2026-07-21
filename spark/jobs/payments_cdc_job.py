@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 from __future__ import annotations
 
 import argparse
@@ -36,7 +35,6 @@ def build_spark(app_name: str = "payments_cdc_v1") -> SparkSession:
             "org.apache.hadoop:hadoop-aws:3.3.4",
         ]
     )
-
     spark = (
         SparkSession.builder.appName(app_name)
         .master("local[2]")
@@ -72,8 +70,15 @@ def dedup_latest(df: DataFrame) -> DataFrame:
     )
 
 
-# MERGE with LSN monotonicity guard
+# MERGE with LSN monotonicity guard + Soft Delete (tombstone) architecture
 def merge_batch(spark: SparkSession, staged: DataFrame) -> None:
+    """
+    Soft-delete MERGE.
+    - Never physically delete a row (that destroys the LSN guard).
+    - Always keep the highest-LSN version of every transaction_id.
+    - is_delete=True rows stay in the table forever so that later
+      replays of older inserts are correctly rejected.
+    """
     if staged.rdd.isEmpty():
         print("[merge] empty batch – skipping")
         return
@@ -86,16 +91,19 @@ def merge_batch(spark: SparkSession, staged: DataFrame) -> None:
             staged.alias("staged"),
             "target.transaction_id = staged.transaction_id",
         )
-        .whenMatchedDelete(
-            condition="staged.lsn > target.lsn AND staged.is_delete = true"
-        )
+        # Unified update: both normal updates AND soft-deletes
+        # only win when the incoming LSN is strictly newer.
         .whenMatchedUpdateAll(
-            condition="staged.lsn > target.lsn AND staged.is_delete = false"
+            condition="staged.lsn > target.lsn"
         )
-        .whenNotMatchedInsertAll(condition="staged.is_delete = false")
+        # Only insert brand-new live rows.
+        # Never insert a pure delete for a key that has never been seen.
+        .whenNotMatchedInsertAll(
+            condition="staged.is_delete = false"
+        )
         .execute()
     )
-    print("[merge] MERGE completed")
+    print("[merge] MERGE completed (soft-delete / tombstone mode)")
 
 
 # Batch Ledger (exactly-once)
@@ -113,7 +121,7 @@ def already_committed(spark: SparkSession, batch_id: int) -> bool:
             return False
         return batch_id <= max_batch
     except Exception:
-        # Ledger table does not exist till now, next day 
+        # Ledger table does not exist yet
         return False
 
 
@@ -127,7 +135,7 @@ def commit_ledger(spark: SparkSession, batch_id: int) -> None:
     print(f"[ledger] committed batch_id={batch_id}")
 
 
-# process_batch 
+# process_batch
 def process_batch(
     df: DataFrame,
     batch_id: int,
@@ -136,8 +144,8 @@ def process_batch(
     """
     Core micro-batch logic.
 
-    commit=True  > normal streaming path (write to ledger)
-    commit=False > used by replay_offsets.py so that a high fake batch_id
+    commit=True  → normal streaming path (write to ledger)
+    commit=False → used by replay_offsets.py so that a high fake batch_id
                    cannot poison the ledger and permanently skip future batches.
     """
     spark = df.sparkSession
@@ -152,7 +160,7 @@ def process_batch(
     staged = dedup_latest(df)
     print(f"[batch {batch_id}] after dedup = {staged.count()}")
 
-    # 2. Guarded MERGE
+    # 2. Guarded MERGE (soft-delete)
     merge_batch(spark, staged)
 
     # 3. Commit to ledger only when requested
@@ -211,7 +219,6 @@ def run_streaming(
         .trigger(processingTime="10 seconds")
         .start()
     )
-
     print("[stream] Streaming query started. Awaiting termination...")
     query.awaitTermination()
 

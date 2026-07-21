@@ -3,43 +3,16 @@
 from __future__ import annotations
 
 import argparse
-import json
-import sys
-from datetime import datetime, timezone
-
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql import functions as F
 
-# Import production functions from day 2 work
-from spark.utils.avro_deserializer import (
-    deserialize_by_schema_id
-)
+# Production functions
+from spark.utils.avro_deserializer import deserialize_by_schema_id
 from spark.jobs.payments_cdc_job import (
     process_batch,
     TABLE_PATH,
-    LEDGER_PATH,
-    build_spark
+    build_spark,
 )
-
-
-def build_replay_session() -> SparkSession:
-    """Minimal session that matches the production job configuration."""
-    spark = (
-        SparkSession.builder
-        .appName("replay_offsets_probe")
-        .master("local[2]")
-        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-        .config("spark.hadoop.fs.s3a.endpoint", "http://localhost:9000")
-        .config("spark.hadoop.fs.s3a.access.key", "minioadmin")
-        .config("spark.hadoop.fs.s3a.secret.key", "minioadmin")
-        .config("spark.hadoop.fs.s3a.path.style.access", "true")
-        .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
-        .config("spark.sql.shuffle.partitions", "4")
-        .getOrCreate()
-    )
-    spark.sparkContext.setLogLevel("WARN")
-    return spark
 
 
 def read_kafka_range(
@@ -61,6 +34,7 @@ def read_kafka_range(
 
 
 def snapshot_metrics(spark: SparkSession) -> tuple[int, int]:
+    """Return (row_count, sum(amount_minor)) of active (non-deleted) rows."""
     df = (
         spark.read.format("delta")
         .load(TABLE_PATH)
@@ -81,13 +55,13 @@ def run_lsn_guard_test(spark: SparkSession, start_off: str, end_off: str) -> Non
     flat = deserialize_by_schema_id(raw)
 
     before_cnt, before_sum = snapshot_metrics(spark)
-    print(f"BEFORE  → rows={before_cnt:,}  sum(amount_minor)={before_sum:,}")
+    print(f"BEFORE → rows={before_cnt:,}  sum(amount_minor)={before_sum:,}")
 
     # THE CRITICAL CALL — commit=False protects the ledger
     process_batch(flat, batch_id=999_999_999, commit=False)
 
     after_cnt, after_sum = snapshot_metrics(spark)
-    print(f"AFTER   → rows={after_cnt:,}  sum(amount_minor)={after_sum:,}")
+    print(f"AFTER  → rows={after_cnt:,}  sum(amount_minor)={after_sum:,}")
 
     if after_cnt != before_cnt or after_sum != before_sum:
         raise AssertionError(
@@ -96,7 +70,7 @@ def run_lsn_guard_test(spark: SparkSession, start_off: str, end_off: str) -> Non
             f"  sum   {before_sum} → {after_sum}"
         )
 
-    print("REPLAY TEST: table unchanged (LSN guard held, ledger not poisoned)")
+    print("REPLAY TEST: table unchanged  (LSN guard held, ledger not poisoned)")
 
 
 def run_ledger_skip_test(spark: SparkSession, already_committed_batch_id: int) -> None:
@@ -114,7 +88,7 @@ def run_ledger_skip_test(spark: SparkSession, already_committed_batch_id: int) -
     if after_cnt != before_cnt or after_sum != before_sum:
         raise AssertionError("Ledger skip path wrote data — this must never happen")
 
-    print(f"LEDGER SKIP TEST: batch {already_committed_batch_id} correctly ignored")
+    print(f"LEDGER SKIP TEST: batch {already_committed_batch_id} correctly ignored ✅")
 
 
 def main() -> None:
@@ -127,19 +101,19 @@ def main() -> None:
     )
     parser.add_argument(
         "--start-offsets",
-        default='{"payments.public.transactions":{"0":0,"1":0,"2":0}}',
-        help="Kafka startingOffsets JSON",
+        default='{"payments.public.transactions":{"0":0}}',
+        help="Kafka startingOffsets JSON (single partition)",
     )
     parser.add_argument(
         "--end-offsets",
-        default='{"payments.public.transactions":{"0":500,"1":500,"2":500}}',
+        default='{"payments.public.transactions":{"0":500}}',
         help="Kafka endingOffsets JSON (must be already processed)",
     )
     parser.add_argument(
         "--known-batch-id",
         type=int,
         default=1,
-        help="A batch_id that is already present in the ledger (for ledger-skip test)",
+        help="A batch_id that is already present in the ledger",
     )
     args = parser.parse_args()
 
