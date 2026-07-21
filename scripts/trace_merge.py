@@ -12,11 +12,12 @@ KEY = "8d1653c8-e07b-4ac7-90d6-fa0a27903217"
 spark = build_spark("trace_merge")
 
 # Read the exact range that contains both offset 488 and 1411 on partition 2
+# (Added partitions 0 and 1 to prevent Spark's partition assignment crash)
 raw = (spark.read.format("kafka")
     .option("kafka.bootstrap.servers","localhost:29092")
     .option("subscribe","payments.public.transactions")
-    .option("startingOffsets", '{"payments.public.transactions":{"2":480}}')
-    .option("endingOffsets",   '{"payments.public.transactions":{"2":1420}}')
+    .option("startingOffsets", '{"payments.public.transactions":{"0":0, "1":0, "2":480}}')
+    .option("endingOffsets",   '{"payments.public.transactions":{"0":0, "1":0, "2":1420}}')
     .option("failOnDataLoss","false").load())
 
 flat = deserialize_by_schema_id(raw)
