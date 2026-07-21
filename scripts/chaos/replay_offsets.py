@@ -18,7 +18,7 @@ from spark.jobs.payments_cdc_job import (
     process_batch,
     TABLE_PATH,
     LEDGER_PATH,
-    build_spark_session,          
+    build_spark
 )
 
 
@@ -143,7 +143,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    spark = build_replay_session()
+    spark = build_spark("replay_offsets_probe")
 
     try:
         if args.mode in ("lsn-guard", "both"):
