@@ -12,8 +12,7 @@ from pyspark.sql import functions as F
 
 # Import production functions from day 2 work
 from spark.utils.avro_deserializer import (
-    deserialize_confluent_avro,
-    flatten_envelope,
+    deserialize_by_schema_id
 )
 from spark.jobs.payments_cdc_job import (
     process_batch,
@@ -79,8 +78,7 @@ def run_lsn_guard_test(spark: SparkSession, start_off: str, end_off: str) -> Non
     print(f"Kafka records read: {raw.count()}")
 
     # Same deserialization path the streaming job uses
-    decoded = deserialize_confluent_avro(raw)
-    flat = flatten_envelope(decoded)
+    flat = deserialize_by_schema_id(raw)
 
     before_cnt, before_sum = snapshot_metrics(spark)
     print(f"BEFORE  → rows={before_cnt:,}  sum(amount_minor)={before_sum:,}")
