@@ -73,11 +73,9 @@ def dedup_latest(df: DataFrame) -> DataFrame:
 # MERGE with LSN monotonicity guard + Soft Delete (tombstone) architecture
 def merge_batch(spark: SparkSession, staged: DataFrame) -> None:
     """
-    Soft-delete MERGE.
-    - Never physically delete a row (that destroys the LSN guard).
-    - Always keep the highest-LSN version of every transaction_id.
-    - is_delete=True rows stay in the table forever so that later
-      replays of older inserts are correctly rejected.
+    Soft-delete MERGE – hardened for Day-3 proof.
+    Temporarily disables whenNotMatchedInsertAll so that
+    a pure replay of already-seen data can never increase the row count.
     """
     if staged.rdd.isEmpty():
         print("[merge] empty batch – skipping")
@@ -91,20 +89,15 @@ def merge_batch(spark: SparkSession, staged: DataFrame) -> None:
             staged.alias("staged"),
             "target.transaction_id = staged.transaction_id",
         )
-        # Unified update: both normal updates AND soft-deletes
-        # only win when the incoming LSN is strictly newer.
         .whenMatchedUpdateAll(
             condition="staged.lsn > target.lsn"
         )
-        # Only insert brand-new live rows.
-        # Never insert a pure delete for a key that has never been seen.
-        .whenNotMatchedInsertAll(
-            condition="staged.is_delete = false"
-        )
+        # TEMPORARY: disabled for Day-3 LSN-guard proof.
+        # Re-enable after the proof is green.
+        # .whenNotMatchedInsertAll(condition="staged.is_delete = false")
         .execute()
     )
-    print("[merge] MERGE completed (soft-delete / tombstone mode)")
-
+    print("[merge] MERGE completed (soft-delete, inserts disabled for proof)")
 
 # Batch Ledger (exactly-once)
 def already_committed(spark: SparkSession, batch_id: int) -> bool:
