@@ -161,7 +161,7 @@ def run_streaming(
     spark: SparkSession,
     starting_offsets: str = "earliest",
     max_offsets_per_trigger: int = 5000,
-    use_schema_id_path: bool = False,
+    use_schema_id_path: bool = True,          # changed from falso  to true
 ) -> None:
     raw = (
         spark.readStream.format("kafka")
