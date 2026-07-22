@@ -161,7 +161,7 @@ def run_streaming(
     spark: SparkSession,
     starting_offsets: str = "earliest",
     max_offsets_per_trigger: int = 5000,
-    use_schema_id_path: bool = True,          # changed to true from false
+    use_schema_id_path: bool = True,
 ) -> None:
     raw = (
         spark.readStream.format("kafka")
@@ -173,41 +173,50 @@ def run_streaming(
         .load()
     )
 
+    # only extract the schema_id here (lazy transformation).
+    # The actual per-schema decoding happens inside foreachBatch
+    # where the DataFrame is a normal batch DataFrame.
     if use_schema_id_path:
         print("[stream] using deserialize_by_schema_id (schema-evolution path)")
-        parsed = deserialize_by_schema_id(raw)
+        # Just carry the raw Kafka rows forward; decoding is done per micro-batch
+        staged_raw = raw
     else:
         print("[stream] using single-schema deserialize path")
         schema_json = latest_schema()
-        parsed = deserialize(raw, schema_json)
+        staged_raw = deserialize(raw, schema_json)
 
-    # Select only the columns needed for the MERGE
-    final_cols = [
-        "transaction_id",
-        "merchant_id",
-        "amount_minor",
-        "currency",
-        "status",
-        "event_type",
-        "created_at",
-        "updated_at",
-        "lsn",
-        "source_ts",
-        "is_delete",
-    ]
-    staged = parsed.select(*final_cols)
+    def foreach_batch_wrapper(df: DataFrame, batch_id: int) -> None:
+        if use_schema_id_path:
+            # Now it is safe — df is a batch DataFrame
+            parsed = deserialize_by_schema_id(df)
+        else:
+            parsed = df   # already deserialized in the single-schema path
+
+        # Project to the columns the MERGE needs
+        final_cols = [
+            "transaction_id",
+            "merchant_id",
+            "amount_minor",
+            "currency",
+            "status",
+            "event_type",
+            "created_at",
+            "updated_at",
+            "lsn",
+            "source_ts",
+            "is_delete",
+        ]
+        staged = parsed.select(*final_cols)
+        process_batch(staged, batch_id, commit=True)
 
     query = (
-        staged.writeStream.foreachBatch(
-            lambda df, batch_id: process_batch(df, batch_id, commit=True)
-        )
+        staged_raw.writeStream.foreachBatch(foreach_batch_wrapper)
         .option("checkpointLocation", CHECKPOINT_PATH)
         .trigger(processingTime="10 seconds")
         .start()
     )
     print("[stream] Streaming query started. Awaiting termination...")
     query.awaitTermination()
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Payments CDC Streaming Job")
