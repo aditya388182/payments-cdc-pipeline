@@ -3,7 +3,7 @@
 set -euo pipefail
 
 LOG_FILE="documents/chaos_log.txt"
-mkdir -p docs
+mkdir -p documents
 
 PID=$(pgrep -f "payments_cdc_job.py" | head -1 || true)
 
