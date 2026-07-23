@@ -11,7 +11,7 @@ def build_spark(naive: bool) -> SparkSession:
     builder = (
         SparkSession.builder.appName("aggregation_skew_job")
         .master("local[2]")
-        .config("spark.jars.packages", "io.delta:delta-spark_2.12:3.1.0,org.apache.hadoop:hadoop-aws:3.3.4") # changed 
+        .config("spark.jars.packages", "io.delta:delta-spark_2.12:3.1.0")
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
         .config("spark.sql.catalog.spark_catalog",
                 "org.apache.spark.sql.delta.catalog.DeltaCatalog")
@@ -34,8 +34,24 @@ def build_spark(naive: bool) -> SparkSession:
     return builder.getOrCreate()
 
 
-def naive_aggregate(df):
-    return df.groupBy("merchant_id").agg(
+def naive_aggregate(df, n_partitions: int = 8):
+    # A plain groupBy(...).agg(sum(...)) never shows the whale here: Spark
+    # auto-applies map-side partial aggregation for associative functions
+    # like sum/count, collapsing each partition's rows down to one tiny
+    # partial-sum row BEFORE the shuffle. The reduce-side stage then only
+    # ever handles a handful of partial sums (you'll see this as a tiny
+    # "Shuffle Read Records" count, e.g. 42) -- flat task durations no
+    # matter how skewed the raw data is.
+    #
+    # An explicit repartition on merchant_id -- matching
+    # spark.sql.shuffle.partitions -- forces the real, unmerged shuffle:
+    # Spark's planner sees the data is already correctly hash-partitioned
+    # and skips inserting a second exchange, so the aggregate runs directly
+    # against however many raw rows landed in each partition. The whale's
+    # rows all land on ONE task, which now has to actually sum all of them
+    # -- that's what produces the real straggler.
+    repartitioned = df.repartition(n_partitions, "merchant_id")
+    return repartitioned.groupBy("merchant_id").agg(
         _sum("amount_minor").alias("total_minor"),
         _count("*").alias("n"),
     )
@@ -59,6 +75,9 @@ def main():
     ap.add_argument("--mode", choices=["naive", "salted"], required=True)
     ap.add_argument("--starting-version", type=int, default=0)
     ap.add_argument("--n-salt", type=int, default=8)
+    ap.add_argument("--n-partitions", type=int, default=8,
+                     help="Must match spark.sql.shuffle.partitions so Spark "
+                          "skips a redundant second shuffle after repartition")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--hold-seconds", type=int, default=90)
     args = ap.parse_args()
@@ -74,8 +93,10 @@ def main():
     )
 
     t0 = time.time()
-    result = naive_aggregate(cdf) if args.mode == "naive" else salted_aggregate(
-        cdf, args.n_salt, args.seed
+    result = (
+        naive_aggregate(cdf, args.n_partitions)
+        if args.mode == "naive"
+        else salted_aggregate(cdf, args.n_salt, args.seed)
     )
 
     n_rows = result.count()  # forcing action -- every partition must fully run
