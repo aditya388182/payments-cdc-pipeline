@@ -34,7 +34,7 @@ def build_spark(naive: bool) -> SparkSession:
     builder = (
         SparkSession.builder.appName("aggregation_skew_job")
         .master("local[2]")
-        .config("spark.jars.packages", "io.delta:delta-spark_2.12:3.1.0")
+        .config("spark.jars.packages", "io.delta:delta-spark_2.12:3.1.0,org.apache.hadoop:hadoop-aws:3.3.4")
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
         .config("spark.sql.catalog.spark_catalog",
                 "org.apache.spark.sql.delta.catalog.DeltaCatalog")
