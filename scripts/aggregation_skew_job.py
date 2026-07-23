@@ -1,24 +1,3 @@
-"""
-scripts/aggregation_skew_job.py
-
-Day-4 whale-skew demo consumer for the payments CDC project.
-
-The MERGE path (payments_cdc_job.py) is PK-keyed on transaction_id and is
-therefore already uniform -- skew never shows up there. Skew only appears
-when you GROUP BY MERCHANT, so this is a separate batch job that reads the
-Delta Change Data Feed and rolls up per-merchant totals.
-
-Two modes:
-  naive  : AQE off, plain groupBy(merchant_id) -- the whale merchant's key
-           lands on a single task, producing the straggler you screenshot
-           as 07_skew_before.png.
-  salted : AQE on, skewJoin on, two-phase salted aggregation (N=8 buckets)
-           -- screenshot as 08_skew_after.png.
-
-Rule: salting belongs ONLY in this aggregation stage. Never salt the
-MERGE path in payments_cdc_job.py, and never re-key the Kafka topic to
-fix a Spark-side aggregation problem (see runbooks/hot_partition.md).
-"""
 import argparse
 import time
 
@@ -58,21 +37,6 @@ def build_spark(naive: bool) -> SparkSession:
 
 
 def naive_aggregate(df, n_partitions: int = 8):
-    # A plain groupBy(...).agg(sum(...)) never shows the whale here: Spark
-    # auto-applies map-side partial aggregation for associative functions
-    # like sum/count, collapsing each partition's rows down to one tiny
-    # partial-sum row BEFORE the shuffle. The reduce-side stage then only
-    # ever handles a handful of partial sums (you'll see this as a tiny
-    # "Shuffle Read Records" count, e.g. 42) -- flat task durations no
-    # matter how skewed the raw data is.
-    #
-    # An explicit repartition on merchant_id -- matching
-    # spark.sql.shuffle.partitions -- forces the real, unmerged shuffle:
-    # Spark's planner sees the data is already correctly hash-partitioned
-    # and skips inserting a second exchange, so the aggregate runs directly
-    # against however many raw rows landed in each partition. The whale's
-    # rows all land on ONE task, which now has to actually sum all of them
-    # -- that's what produces the real straggler.
     repartitioned = df.repartition(n_partitions, "merchant_id")
     return repartitioned.groupBy("merchant_id").agg(
         _sum("amount_minor").alias("total_minor"),
@@ -81,20 +45,8 @@ def naive_aggregate(df, n_partitions: int = 8):
 
 
 def salted_aggregate(df, n_salt: int, seed: int, n_partitions: int = 8):
-    # Deterministic hash-based salt rather than rand(): rand() is recomputed
-    # after a shuffle changes partition indices, which would silently corrupt
-    # the two-phase rollup below. hash(transaction_id) is stable across
-    # shuffles and spreads uniformly.
     salted_input = df.withColumn("salt", pmod(_hash(col("transaction_id")), lit(n_salt)))
 
-    # Same repartition trick as naive_aggregate, and for the same reason:
-    # without it Spark pre-combines each partition down to tiny partial-sum
-    # rows before the shuffle, and this stage looks flat whether or not the
-    # salt did anything. Repartitioning on (merchant_id, salt) forces the raw
-    # rows across the shuffle -- and because the whale's rows now carry
-    # n_salt distinct salt values, they fan out across n_salt separate hash
-    # buckets instead of piling onto one task. THAT is what the flat
-    # distribution in this stage proves.
     repartitioned = salted_input.repartition(n_partitions, "merchant_id", "salt")
 
     first = repartitioned.groupBy("merchant_id", "salt").agg(
