@@ -15,6 +15,7 @@ def build_spark() -> SparkSession:
             "io.delta:delta-spark_2.12:3.1.0",
             "org.apache.hadoop:hadoop-aws:3.3.4",
             "org.postgresql:postgresql:42.7.3",
+            "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1", # Added for DLQ reading
         ]
     )
 
@@ -75,6 +76,23 @@ def load_delta(spark: SparkSession):
     )
 
 
+def load_dlq_keys(spark: SparkSession):
+    """Load keys from the DLQ topic to identify quarantined records."""
+    try:
+        dlq_df = (
+            spark.read.format("kafka")
+            .option("kafka.bootstrap.servers", "localhost:29092")
+            .option("subscribe", "payments.transactions.dlq")
+            .option("startingOffsets", "earliest")
+            .load()
+        )
+        return dlq_df.select(F.col("key").cast("string").alias("transaction_id")).distinct()
+    except Exception:
+        # Topic might be empty or missing yet
+        from pyspark.sql.types import StructType, StructField, StringType
+        return spark.createDataFrame([], StructType([StructField("transaction_id", StringType(), True)]))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Postgres ↔ Delta parity checker")
     parser.add_argument(
@@ -89,15 +107,18 @@ def main() -> None:
 
     pg = load_postgres(spark).cache()
     delta = load_delta(spark).cache()
+    dlq_keys = load_dlq_keys(spark).cache()
 
     pg_count = pg.count()
     delta_count = delta.count()
-    print(f"[parity] Postgres rows          = {pg_count}")
-    print(f"[parity] Delta live rows        = {delta_count}")
 
     # Missing in Delta (present in Postgres, absent in Delta)
-    missing = pg.join(delta, on="transaction_id", how="left_anti")
-    missing_count = missing.count()
+    missing = pg.join(delta, on="transaction_id", how="left_anti").cache()
+    missing_in_delta_total = missing.count()
+
+    # Quarantine Logic (Intersection of missing rows and DLQ keys)
+    quarantined = missing.join(dlq_keys, on="transaction_id", how="inner").count()
+    unaccounted = missing_in_delta_total - quarantined
 
     # Extra in Delta (present in Delta, absent in Postgres)
     extra = delta.join(pg, on="transaction_id", how="left_anti")
@@ -122,36 +143,46 @@ def main() -> None:
         .count()
     )
 
-    print(f"[parity] missing_in_delta       = {missing_count}")
-    print(f"[parity] extra_in_delta         = {extra_count}")
-    print(f"[parity] value_mismatch         = {mismatch_count}")
-    print(f"[parity] duplicate_keys_in_delta= {dupes}")
+    # Option B output format
+    print(f"[parity] Postgres rows                    = {pg_count}")
+    print(f"[parity] Delta live rows                  = {delta_count}")
+    print(f"[parity] missing_in_delta_total           = {missing_in_delta_total}")
+    print(f"[parity] unaccounted (not in DLQ either)  = {unaccounted}")
+    print(f"[parity] quarantined                      = {quarantined}")
+    print(f"[parity] extra_in_delta                   = {extra_count}")
+    print(f"[parity] value_mismatch                   = {mismatch_count}")
+    print(f"[parity] duplicate_keys_in_delta          = {dupes}\n")
+
+    # Oracle Enforcement
+    EXPECTED_QUARANTINE_AFTER_INJECTION = 53
+    if quarantined not in (0, EXPECTED_QUARANTINE_AFTER_INJECTION):
+        print(f"ORACLE FAIL: Expected quarantined to be 0 or {EXPECTED_QUARANTINE_AFTER_INJECTION}, got {quarantined}")
+        spark.stop()
+        sys.exit(1)
 
     # Decision
-    effective_missing = max(0, missing_count - args.tolerate_inflight)
+    effective_unaccounted = max(0, unaccounted - args.tolerate_inflight)
     passed = (
-        effective_missing == 0
+        effective_unaccounted == 0
         and extra_count == 0
         and mismatch_count == 0
         and dupes == 0
     )
 
     if not passed:
-        print("\n--- Sample missing_in_delta ---")
-        missing.show(10, truncate=False)
+        print("\n--- Sample unaccounted (missing) ---")
+        missing.join(dlq_keys, on="transaction_id", how="left_anti").show(10, truncate=False)
         print("\n--- Sample extra_in_delta ---")
         extra.show(10, truncate=False)
         print("\n--- Sample value_mismatch ---")
         mismatches.show(10, truncate=False)
-
-    if passed:
-        print("\nPARITY: PASS")
-        spark.stop()
-        sys.exit(0)
-    else:
-        print("\nPARITY: FAIL")
+        print("\nPARITY: FAIL ❌")
         spark.stop()
         sys.exit(1)
+    else:
+        print("PARITY: PASS")
+        spark.stop()
+        sys.exit(0)
 
 
 if __name__ == "__main__":
