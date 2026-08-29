@@ -19,9 +19,7 @@ from confluent_kafka.schema_registry.avro import AvroSerializer
 from confluent_kafka.serialization import MessageField, SerializationContext
 from pyspark.sql import functions as F
 
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
+
 PG_DSN = {
     "host": "localhost",
     "port": 5432,
@@ -50,9 +48,6 @@ DLQ_CONSUME_SECONDS = 12.0
 ID_DUMP = Path("docs/day5_logs/injected_ids.json")
 
 
-# ===========================================================================
-# Process / Postgres / Spark helpers
-# ===========================================================================
 def check_streaming_job_alive() -> None:
     result = subprocess.run(
         ["pgrep", "-af", "spark.jobs.payments_cdc_job"],
@@ -66,13 +61,7 @@ def check_streaming_job_alive() -> None:
         if "spark.jobs.payments_cdc_job" in ln and "pgrep" not in ln
     ]
     if not lines:
-        raise SystemExit(
-            "FATAL: streaming job is not running.\n"
-            "Start it in another terminal:\n"
-            "  unset PYSPARK_SUBMIT_ARGS\n"
-            "  source venv/bin/activate\n"
-            "  python -m spark.jobs.payments_cdc_job --starting-offsets earliest"
-        )
+        raise SystemExit("FATAL: streaming job is not running.")
     print("Streaming job is alive.")
 
 
@@ -112,12 +101,8 @@ def assert_transaction_id_is_uuid() -> None:
     )
     if not rows:
         raise SystemExit("FATAL: transactions.transaction_id column not found")
-    dtype = rows[0][0]
-    if dtype != "uuid":
-        raise SystemExit(
-            f"FATAL: transaction_id is {dtype!r}, expected uuid. "
-            "A previous VARCHAR widen/restore left the PK broken."
-        )
+    if rows[0][0] != "uuid":
+        raise SystemExit("FATAL: transaction_id is not uuid.")
     print("Precondition OK: transaction_id is still UUID.")
 
 
@@ -141,42 +126,28 @@ def insert_row(
 
 def cleanup_injected(all_bad_ids: List[str]) -> None:
     if not all_bad_ids:
-        print("cleanup_injected: no ids")
         return
-    pg_execute(
-        "DELETE FROM transactions WHERE transaction_id = ANY(%s)",
-        (all_bad_ids,),
-    )
+    pg_execute("DELETE FROM transactions WHERE transaction_id = ANY(%s)", (all_bad_ids,))
     print(f"cleanup_injected: deleted {len(all_bad_ids)} Postgres rows")
 
 
-# ===========================================================================
-# Avro / Kafka — test 3 rogue producer
-# ===========================================================================
 def _get_avro_serializer() -> AvroSerializer:
     sr = SchemaRegistryClient({"url": SCHEMA_REGISTRY_URL})
     latest = sr.get_latest_version(SUBJECT)
     return AvroSerializer(
         sr,
         latest.schema.schema_str,
-        conf={
-            "auto.register.schemas": False,
-            "use.latest.version": True,
-        },
+        conf={"auto.register.schemas": False, "use.latest.version": True},
     )
 
 
 def _envelope(
-    *,
-    op: str,
-    transaction_id: str,
-    merchant_id: str,
-    amount_minor: int,
-    currency: str,
-    lsn: int,
+    *, op: str, transaction_id: str, merchant_id: str, amount_minor: int, currency: str, lsn: int
 ) -> Dict[str, Any]:
     now_ms = int(time.time() * 1000)
-    now_us = int(time.time() * 1_000_000)
+    # Debezium ZonedTimestamp expects string format, not integer!
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    
     row = {
         "transaction_id": transaction_id,
         "merchant_id": merchant_id,
@@ -184,8 +155,8 @@ def _envelope(
         "currency": currency,
         "status": VALID_STATUS,
         "event_type": VALID_EVENT_TYPE,
-        "created_at": now_us,
-        "updated_at": now_us,
+        "created_at": now_str,
+        "updated_at": now_str,
         "risk_score": None,
     }
     source = {
@@ -195,7 +166,7 @@ def _envelope(
         "ts_ms": now_ms,
         "snapshot": "false",
         "db": "payments",
-        "sequence": f"[\"{lsn}\",\"{lsn}\"]",
+        "sequence": f'["{lsn}","{lsn}"]',
         "schema": "public",
         "table": "transactions",
         "txId": 1,
@@ -219,14 +190,7 @@ def _try_serialize(serializer: AvroSerializer, envelope: Dict[str, Any]) -> byte
     try:
         payload = serializer(envelope, ctx)
     except Exception as exc:
-        sr = SchemaRegistryClient({"url": SCHEMA_REGISTRY_URL})
-        latest = sr.get_latest_version(SUBJECT)
-        print("Avro serialization failed against the registered schema.", file=sys.stderr)
-        print(f"subject={SUBJECT} version={latest.version}", file=sys.stderr)
-        print(latest.schema.schema_str, file=sys.stderr)
-        raise SystemExit(
-            f"FATAL: rogue envelope does not match registered schema ({exc})."
-        ) from exc
+        raise SystemExit(f"FATAL: rogue envelope does not match registered schema ({exc}).") from exc
     if payload is None:
         raise SystemExit("FATAL: AvroSerializer returned None")
     return payload
@@ -251,29 +215,18 @@ def publish_rogue_avro(
     payload = _try_serialize(serializer, envelope)
 
     delivered = {"err": None}
-
-    def _cb(err, _msg):
-        delivered["err"] = err
+    def _cb(err, _msg): delivered["err"] = err
 
     producer = Producer({"bootstrap.servers": KAFKA_BOOTSTRAP, "acks": "all"})
-    producer.produce(
-        CDC_TOPIC,
-        key=transaction_id.encode("utf-8"),
-        value=payload,
-        on_delivery=_cb,
-    )
+    producer.produce(CDC_TOPIC, key=transaction_id.encode("utf-8"), value=payload, on_delivery=_cb)
     producer.flush(15)
     if delivered["err"] is not None:
         raise SystemExit(f"FATAL: Kafka produce failed: {delivered['err']}")
     print(f"  published rogue Avro envelope key={transaction_id!r} to {CDC_TOPIC}")
 
 
-# ===========================================================================
-# DLQ + Delta observation
-# ===========================================================================
 def read_dlq_messages(
-    timeout_s: float = DLQ_CONSUME_SECONDS,
-    max_records: int = 20_000,
+    timeout_s: float = DLQ_CONSUME_SECONDS, max_records: int = 20_000
 ) -> List[Dict[str, Any]]:
     conf = {
         "bootstrap.servers": KAFKA_BOOTSTRAP,
@@ -289,12 +242,9 @@ def read_dlq_messages(
     try:
         while time.time() - start_time < timeout_s:
             msg = consumer.poll(1.0)
-            if msg is None:
-                continue
-            if msg.error():
+            if msg is None or msg.error():
                 continue
             raw = msg.value() or b""
-            rec: Dict[str, Any]
             try:
                 parsed = json.loads(raw.decode("utf-8"))
                 rec = parsed if isinstance(parsed, dict) else {"_raw": parsed}
@@ -302,11 +252,49 @@ def read_dlq_messages(
                 rec = {"_raw": raw.decode("utf-8", "replace")}
             key_raw = msg.key()
             rec["_key"] = key_raw.decode("utf-8", "replace") if key_raw else None
-            rec["_offset"] = msg.offset()
-            rec["_partition"] = msg.partition()
             out.append(rec)
             if len(out) >= max_records:
                 break
+    finally:
+        consumer.close()
+    return out
+
+
+def wait_for_dlq(ids: Sequence[str]) -> List[Dict[str, Any]]:
+    want = set(ids)
+    deadline = time.time() + POLL_SECONDS
+    
+    conf = {
+        "bootstrap.servers": KAFKA_BOOTSTRAP,
+        "group.id": f"day5-inject-dlq-{uuid.uuid4()}",
+        "auto.offset.reset": "earliest",
+        "enable.auto.commit": False,
+    }
+    consumer = Consumer(conf)
+    consumer.subscribe([DLQ_TOPIC])
+    
+    out: List[Dict[str, Any]] = []
+    have = set()
+    try:
+        while time.time() < deadline:
+            msg = consumer.poll(1.0)
+            if msg is None or msg.error():
+                continue
+            raw = msg.value() or b""
+            try:
+                parsed = json.loads(raw.decode("utf-8"))
+                rec = parsed if isinstance(parsed, dict) else {"_raw": parsed}
+            except Exception:
+                rec = {"_raw": raw.decode("utf-8", "replace")}
+            key_raw = msg.key()
+            rec["_key"] = key_raw.decode("utf-8", "replace") if key_raw else None
+            out.append(rec)
+            
+            tid = str(rec.get("transaction_id") or rec.get("_key") or "")
+            if tid in want:
+                have.add(tid)
+            if have == want:
+                return out
     finally:
         consumer.close()
     return out
@@ -327,14 +315,11 @@ def dlq_hit(transaction_id: str, messages: Optional[List[Dict[str, Any]]] = None
 
 def _spark():
     from spark.jobs.payments_cdc_job import TABLE_PATH, build_spark
-
-    spark = build_spark("day5-inject-observe")
-    return spark, TABLE_PATH
+    return build_spark("day5-inject-observe"), TABLE_PATH
 
 
 def delta_live_ids(spark, table_path: str, ids: Sequence[str]) -> set:
-    if not ids:
-        return set()
+    if not ids: return set()
     df = (
         spark.read.format("delta")
         .load(table_path)
@@ -351,14 +336,8 @@ def wait_for_delta_presence(spark, table_path: str, ids: Sequence[str], label: s
     seen: set = set()
     while time.time() < deadline:
         seen = delta_live_ids(spark, table_path, ids)
-        if seen == want:
-            return seen
+        if seen == want: return seen
         time.sleep(POLL_INTERVAL)
-    missing = want - seen
-    print(
-        f"  WARN: wait_for_delta timed out ({label}); "
-        f"present={len(seen)}/{len(want)} missing_sample={list(missing)[:5]}"
-    )
     return seen
 
 
@@ -367,26 +346,6 @@ def settle_absence(spark, table_path: str, ids: Sequence[str]) -> set:
     return delta_live_ids(spark, table_path, ids)
 
 
-def wait_for_dlq(ids: Sequence[str]) -> List[Dict[str, Any]]:
-    want = set(ids)
-    deadline = time.time() + POLL_SECONDS
-    last: List[Dict[str, Any]] = []
-    while time.time() < deadline:
-        last = read_dlq_messages(timeout_s=3.0)
-        have = set()
-        for rec in last:
-            tid = str(rec.get("transaction_id") or rec.get("_key") or "")
-            if tid in want:
-                have.add(tid)
-        if have == want:
-            return last
-        time.sleep(POLL_INTERVAL)
-    return last
-
-
-# ===========================================================================
-# Tests
-# ===========================================================================
 def test_1_negative_amount(spark, table_path: str) -> Dict[str, Any]:
     tid = str(uuid.uuid4())
     insert_row(tid, KNOWN_MERCHANT, -1500, VALID_CURRENCY)
@@ -394,12 +353,7 @@ def test_1_negative_amount(spark, table_path: str) -> Dict[str, Any]:
     in_dlq, reason = dlq_hit(tid, msgs)
     leaked = tid in settle_absence(spark, table_path, [tid])
     ok = in_dlq and "NEGATIVE_AMOUNT" in reason and not leaked
-    return {
-        "name": "NEGATIVE_AMOUNT",
-        "ok": ok,
-        "ids": [tid],
-        "detail": f"dlq={in_dlq} reason={reason or None} in_delta={leaked}",
-    }
+    return {"name": "NEGATIVE_AMOUNT", "ok": ok, "ids": [tid], "detail": f"dlq={in_dlq} reason={reason or None} in_delta={leaked}"}
 
 
 def test_2_invalid_currency(spark, table_path: str) -> Dict[str, Any]:
@@ -409,12 +363,7 @@ def test_2_invalid_currency(spark, table_path: str) -> Dict[str, Any]:
     in_dlq, reason = dlq_hit(tid, msgs)
     leaked = tid in settle_absence(spark, table_path, [tid])
     ok = in_dlq and "INVALID_CURRENCY" in reason and not leaked
-    return {
-        "name": "INVALID_CURRENCY",
-        "ok": ok,
-        "ids": [tid],
-        "detail": f"dlq={in_dlq} reason={reason or None} in_delta={leaked}",
-    }
+    return {"name": "INVALID_CURRENCY", "ok": ok, "ids": [tid], "detail": f"dlq={in_dlq} reason={reason or None} in_delta={leaked}"}
 
 
 def test_3_invalid_uuid(spark, table_path: str) -> Dict[str, Any]:
@@ -424,13 +373,7 @@ def test_3_invalid_uuid(spark, table_path: str) -> Dict[str, Any]:
     in_dlq, reason = dlq_hit(tid, msgs)
     leaked = tid in settle_absence(spark, table_path, [tid])
     ok = in_dlq and "INVALID_UUID" in reason and not leaked
-    return {
-        "name": "INVALID_UUID",
-        "ok": ok,
-        "ids": [tid],
-        "detail": f"dlq={in_dlq} reason={reason or None} in_delta={leaked}",
-        "in_postgres": False,
-    }
+    return {"name": "INVALID_UUID", "ok": ok, "ids": [tid], "detail": f"dlq={in_dlq} reason={reason or None} in_delta={leaked}", "in_postgres": False}
 
 
 def test_4_unknown_merchant(spark, table_path: str) -> Dict[str, Any]:
@@ -440,12 +383,7 @@ def test_4_unknown_merchant(spark, table_path: str) -> Dict[str, Any]:
     in_dlq, reason = dlq_hit(tid, msgs)
     leaked = tid in settle_absence(spark, table_path, [tid])
     ok = in_dlq and "UNKNOWN_MERCHANT" in reason and not leaked
-    return {
-        "name": "UNKNOWN_MERCHANT",
-        "ok": ok,
-        "ids": [tid],
-        "detail": f"dlq={in_dlq} reason={reason or None} in_delta={leaked}",
-    }
+    return {"name": "UNKNOWN_MERCHANT", "ok": ok, "ids": [tid], "detail": f"dlq={in_dlq} reason={reason or None} in_delta={leaked}"}
 
 
 def test_5_mixed_batch(spark, table_path: str) -> Dict[str, Any]:
@@ -454,34 +392,21 @@ def test_5_mixed_batch(spark, table_path: str) -> Dict[str, Any]:
 
     invalid_spec: List[Tuple[str, str, int, str]] = []
     for i, tid in enumerate(invalid_ids):
-        if i < 20:
-            invalid_spec.append((tid, KNOWN_MERCHANT, -4000 - i, VALID_CURRENCY))
-        elif i < 35:
-            invalid_spec.append((tid, KNOWN_MERCHANT, 4000 + i, INVALID_CURRENCY))
-        else:
-            invalid_spec.append((tid, GHOST_MERCHANT, 4000 + i, VALID_CURRENCY))
+        if i < 20: invalid_spec.append((tid, KNOWN_MERCHANT, -4000 - i, VALID_CURRENCY))
+        elif i < 35: invalid_spec.append((tid, KNOWN_MERCHANT, 4000 + i, INVALID_CURRENCY))
+        else: invalid_spec.append((tid, GHOST_MERCHANT, 4000 + i, VALID_CURRENCY))
 
     conn = pg_conn()
     try:
         with conn.cursor() as cur:
             for tid in valid_ids:
                 cur.execute(
-                    """
-                    INSERT INTO transactions (
-                        transaction_id, merchant_id, amount_minor, currency,
-                        status, event_type
-                    ) VALUES (%s, %s, %s, %s, %s, %s)
-                    """,
+                    "INSERT INTO transactions (transaction_id, merchant_id, amount_minor, currency, status, event_type) VALUES (%s, %s, %s, %s, %s, %s)",
                     (tid, KNOWN_MERCHANT, 5000, VALID_CURRENCY, VALID_STATUS, VALID_EVENT_TYPE),
                 )
             for tid, mid, amt, ccy in invalid_spec:
                 cur.execute(
-                    """
-                    INSERT INTO transactions (
-                        transaction_id, merchant_id, amount_minor, currency,
-                        status, event_type
-                    ) VALUES (%s, %s, %s, %s, %s, %s)
-                    """,
+                    "INSERT INTO transactions (transaction_id, merchant_id, amount_minor, currency, status, event_type) VALUES (%s, %s, %s, %s, %s, %s)",
                     (tid, mid, amt, ccy, VALID_STATUS, VALID_EVENT_TYPE),
                 )
         conn.commit()
@@ -495,28 +420,12 @@ def test_5_mixed_batch(spark, table_path: str) -> Dict[str, Any]:
     dlq_ids = set()
     for rec in msgs:
         tid = str(rec.get("transaction_id") or rec.get("_key") or "")
-        if tid in set(invalid_ids):
-            dlq_ids.add(tid)
+        if tid in set(invalid_ids): dlq_ids.add(tid)
 
-    n_present = len(present)
-    n_leaked = len(leaked)
-    n_dlq_missing = len(set(invalid_ids) - dlq_ids)
-    ok = n_present == 50 and n_leaked == 0 and n_dlq_missing == 0
-    return {
-        "name": "MIXED_BATCH",
-        "ok": ok,
-        "ids": invalid_ids,
-        "detail": (
-            f"valid_present={n_present}/50 "
-            f"invalid_leaked={n_leaked}/50 "
-            f"dlq_missing={n_dlq_missing}/50"
-        ),
-    }
+    ok = len(present) == 50 and len(leaked) == 0 and len(set(invalid_ids) - dlq_ids) == 0
+    return {"name": "MIXED_BATCH", "ok": ok, "ids": invalid_ids, "detail": f"valid_present={len(present)}/50 invalid_leaked={len(leaked)}/50 dlq_missing={len(set(invalid_ids) - dlq_ids)}/50"}
 
 
-# ===========================================================================
-# Driver
-# ===========================================================================
 def _dump_ids(pg_ids: List[str], rogue_ids: List[str]) -> None:
     ID_DUMP.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -525,30 +434,9 @@ def _dump_ids(pg_ids: List[str], rogue_ids: List[str]) -> None:
         "rogue_ids": rogue_ids,
         "quarantine_oracle": len(pg_ids),
         "dlq_oracle": len(pg_ids) + len(rogue_ids),
-        "note": (
-            "quarantine_oracle=53 after a clean single run "
-            "(1+1+1+50). rogue UUID is DLQ-only, not in Postgres."
-        ),
     }
     ID_DUMP.write_text(json.dumps(payload, indent=2))
     print(f"Wrote injected ids -> {ID_DUMP}")
-
-
-def _load_ids() -> List[str]:
-    if not ID_DUMP.exists():
-        raise SystemExit(f"FATAL: {ID_DUMP} not found — run the suite before --cleanup")
-    payload = json.loads(ID_DUMP.read_text())
-    return list(payload.get("postgres_ids") or [])
-
-
-def run_cleanup() -> int:
-    ids = _load_ids()
-    cleanup_injected(ids)
-    print(
-        "Cleanup issued. Wait for the stream to apply the op='d' events, "
-        "then run scripts/parity_checker.py (Stage 9b)."
-    )
-    return 0
 
 
 def run_suite() -> int:
@@ -559,8 +447,7 @@ def run_suite() -> int:
 
     spark, table_path = _spark()
     results: List[Dict[str, Any]] = []
-    pg_ids: List[str] = []
-    rogue_ids: List[str] = []
+    pg_ids, rogue_ids = [], []
 
     tests = [
         ("test_1_negative_amount", test_1_negative_amount),
@@ -575,54 +462,27 @@ def run_suite() -> int:
             print(f"[{i}/5] Running {label} …")
             rec = fn(spark, table_path)
             results.append(rec)
-            if rec.get("in_postgres", True):
-                pg_ids.extend(rec["ids"])
-            else:
-                rogue_ids.extend(rec["ids"])
-            flag = "PASS" if rec["ok"] else "FAIL"
-            print(f"  -> {flag} ({rec['detail']})")
-            if (not rec["ok"]) and "in_delta=True" in rec["detail"]:
-                print(
-                    "  [!] GATE LEAK — do NOT RESTORE the Delta table. "
-                    "Capture the row and DESCRIBE HISTORY first."
-                )
+            if rec.get("in_postgres", True): pg_ids.extend(rec["ids"])
+            else: rogue_ids.extend(rec["ids"])
+            print(f"  -> {'PASS' if rec['ok'] else 'FAIL'} ({rec['detail']})")
     finally:
         spark.stop()
 
     _dump_ids(pg_ids, rogue_ids)
-
-    print()
-    print(f"{'TEST':<22} {'RESULT':<8} DETAIL")
-    print("-" * 72)
+    print("\n" + "=" * 72)
     for rec in results:
         print(f"{rec['name']:<22} {'PASS' if rec['ok'] else 'FAIL':<8} {rec['detail']}")
     print("=" * 72)
 
     if all(r["ok"] for r in results):
-        print("ALL 5 INJECTION TESTS PASSED – Delta is clean of invalid records.")
-        print(
-            f"Postgres-sourced rejects={len(pg_ids)}  "
-            f"rogue (Kafka-only)={len(rogue_ids)}  "
-            f"expected DLQ delta={len(pg_ids) + len(rogue_ids)}"
-        )
+        print("ALL 5 INJECTION TESTS PASSED")
         return 0
-
-    print("ONE OR MORE INJECTION TESTS FAILED")
     return 1
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Day 5 DLQ injection suite")
-    parser.add_argument(
-        "--cleanup",
-        action="store_true",
-        help="Delete Postgres-sourced injected ids from docs/day5_logs/injected_ids.json (Stage 9b)",
-    )
-    args = parser.parse_args()
-    if args.cleanup:
-        return run_cleanup()
-    return run_suite()
-
-
 if __name__ == "__main__":
-    sys.exit(main())
+    if "--cleanup" in sys.argv:
+        ids = json.loads(ID_DUMP.read_text()).get("postgres_ids") or []
+        cleanup_injected(ids)
+        sys.exit(0)
+    sys.exit(run_suite())
