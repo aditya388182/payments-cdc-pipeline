@@ -86,7 +86,7 @@ def merchants() -> Set[str]:
     reg.refresh()
     return reg.merchant_ids
 
-def write_dlq(invalid: DataFrame) -> int:
+def write_to_dlq(invalid: DataFrame) -> int:
     """
     connect-dlq = serialization/infrastructure failures (Kafka Connect).
     payments.transactions.dlq = business rules/application rejections (Spark).
@@ -115,3 +115,6 @@ def write_dlq(invalid: DataFrame) -> int:
 
     logger.warning("Wrote %d invalid row(s) to DLQ topic %s", n, DLQ_TOPIC)
     return n
+
+# Alias for backwards compatibility
+write_dlq = write_to_dlq
