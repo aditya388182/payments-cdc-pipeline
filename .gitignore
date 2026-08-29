@@ -1,11 +1,66 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
 .venv/
-checkpoints/
-metastore_db/
-spark-warehouse/
-derby.log
-*.jar
-.env
-.DS_Store
+venv/
+ENV/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
 docs/
+
+# Spark / Delta
+spark-warehouse/
+metastore_db/
+checkpoints/
+*.crc
+_delta_log/
+.delta/
+
+# Docker / local volumes
+docker-data/
+postgres-data/
+kafka-data/
+minio-data/
+connect-data/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Secrets & local config
+.env
+.env.*
+*.pem
+*.key
+secrets/
+
+# Logs & temporary
+*.log
+logs/
+tmp/
+/tmp/
+*.tmp
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Test / coverage
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+.mypy_cache/
+
+# Project-specific
+docs/chaos_log.txt
+*.jar
