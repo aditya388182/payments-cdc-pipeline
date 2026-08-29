@@ -127,7 +127,7 @@ def insert_row(
 def cleanup_injected(all_bad_ids: List[str]) -> None:
     if not all_bad_ids:
         return
-    pg_execute("DELETE FROM transactions WHERE transaction_id = ANY(%s)", (all_bad_ids,))
+    pg_execute("DELETE FROM transactions WHERE transaction_id = ANY(%s::uuid[])", (all_bad_ids,))
     print(f"cleanup_injected: deleted {len(all_bad_ids)} Postgres rows")
 
 
