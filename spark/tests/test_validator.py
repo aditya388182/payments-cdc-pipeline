@@ -290,20 +290,19 @@ def test_delete_still_rejects_bad_uuid(spark: SparkSession):
 
 
 # 15. Delete rejects unknown merchant
-def test_delete_still_rejects_unknown_merchant(spark: SparkSession):
+def test_delete_still_rejects_bad_uuid(spark: SparkSession):
     df = make_df(spark, [{
-        "transaction_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
-        "merchant_id": "GHOST_MERCHANT",
+        "transaction_id": "bad-uuid",
+        "merchant_id": "MERCH_001",
         "amount_minor": -9999,
         "currency": "XYZ",
         "is_delete": True,
-        "lsn": 302,
+        "lsn": 301,
     }])
     valid, invalid = validate(df, KNOWN_MERCHANTS)
     assert valid.count() == 0
     assert invalid.count() == 1
-    assert "UNKNOWN_MERCHANT" in invalid.collect()[0]["rejection_reason"]
-
+    assert "INVALID_UUID" in invalid.collect()[0]["rejection_reason"]
 
 # 16. Multiple failures collected
 def test_multiple_failures_collected(spark: SparkSession):

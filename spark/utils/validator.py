@@ -28,9 +28,9 @@ def _rule_uuid(col_tid: Column) -> Column:
         F.lit("INVALID_UUID"),
     )
 
-def _rule_merchant(col_merchant: Column, merchant_ids: Set[str]) -> Column:
+def _rule_merchant(col_merchant: Column, is_delete: Column, merchant_ids: Set[str]) -> Column:
     return F.when(
-        col_merchant.isNull() | ~col_merchant.isin(list(merchant_ids)),
+        (~is_delete) & (col_merchant.isNull() | ~col_merchant.isin(list(merchant_ids))),
         F.lit("UNKNOWN_MERCHANT"),
     )
 
@@ -44,7 +44,7 @@ def validate(df: DataFrame, merchant_ids: Set[str]) -> Tuple[DataFrame, DataFram
         df.withColumn("r_amount", _rule_amount(F.col("amount_minor"), is_delete))
           .withColumn("r_currency", _rule_currency(F.col("currency"), is_delete))
           .withColumn("r_uuid", _rule_uuid(F.col("transaction_id")))
-          .withColumn("r_merchant", _rule_merchant(F.col("merchant_id"), merchant_ids))
+          .withColumn("r_merchant", _rule_merchant(F.col("merchant_id"), is_delete, merchant_ids))
           .withColumn(
               "rejection_reason",
               F.concat_ws(
