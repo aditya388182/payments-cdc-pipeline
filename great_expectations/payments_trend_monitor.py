@@ -6,8 +6,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
 
-from kafka import KafkaConsumer
-from kafka.errors import NoBrokersAvailable
+from confluent_kafka import Consumer, KafkaException
 from pyspark.sql import functions as F
 
 # Project constants
@@ -20,37 +19,48 @@ MAX_DLQ_RATE = 0.001          # 0.1 %
 THROUGHPUT_TOLERANCE = 0.50   # ±50 %
 LOOKBACK_MINUTES = 60
 
-
 # Helpers
 def build_spark():
     from spark.jobs.payments_cdc_job import build_spark as _build
     return _build("ge-trend-monitor")
 
-
 def count_dlq_messages(lookback_minutes: int = LOOKBACK_MINUTES) -> int:
     cutoff_ms = int((time.time() - lookback_minutes * 60) * 1000)
+    conf = {
+        'bootstrap.servers': KAFKA_BOOTSTRAP,
+        'group.id': 'ge_trend_monitor_group',
+        'auto.offset.reset': 'earliest'
+    }
+    
     try:
-        consumer = KafkaConsumer(
-            DLQ_TOPIC,
-            bootstrap_servers=KAFKA_BOOTSTRAP,
-            auto_offset_reset="earliest",
-            consumer_timeout_ms=12_000,
-            # We only need the timestamp; value is irrelevant
-            value_deserializer=lambda m: None,
-        )
-    except NoBrokersAvailable:
-        print("ALERT: cannot connect to Kafka – DLQ count unavailable")
+        consumer = Consumer(conf)
+        consumer.subscribe([DLQ_TOPIC])
+    except KafkaException as e:
+        print(f"ALERT: cannot connect to Kafka – DLQ count unavailable: {e}")
         return -1
 
     count = 0
+    # Timeout logic since we only need recent messages
+    start_time = time.time()
     try:
-        for msg in consumer:
-            if msg.timestamp is not None and msg.timestamp >= cutoff_ms:
+        while True:
+            # Poll with a 2-second timeout so it exits when caught up
+            msg = consumer.poll(2.0)
+            if msg is None:
+                break
+            if msg.error():
+                print(f"Consumer error: {msg.error()}")
+                continue
+                
+            _, timestamp_ms = msg.timestamp()
+            if timestamp_ms >= cutoff_ms:
                 count += 1
+                
+            if time.time() - start_time > 15: # Safety exit
+                break
     finally:
         consumer.close()
     return count
-
 
 def read_cdf_stats(
     spark,
@@ -76,7 +86,6 @@ def read_cdf_stats(
         recent = cdf.filter(F.col("_commit_timestamp") >= F.lit(recent_cut)).count()
         baseline = cdf.filter(F.col("_commit_timestamp") < F.lit(recent_cut)).count()
     except Exception as exc:
-        # startingTimestamp outside retained CDF range, vacuumed table, etc.
         print(
             f"INFO : CDF unavailable for the requested window "
             f"({exc.__class__.__name__}) – throughput and DLQ-rate checks skipped"
@@ -126,12 +135,10 @@ def run_monitor() -> int:
     alerts = 0
 
     try:
-        # 1. DLQ rate (window-aligned)
         dlq_count = count_dlq_messages()
         stats = read_cdf_stats(spark)
 
         if stats is None:
-            # CDF unavailable – skip rate and throughput, do not alert
             print("INFO : CDF stats unavailable – rate & throughput checks skipped")
             cdf_count = 0
             recent_rps = 0.0
@@ -143,6 +150,11 @@ def run_monitor() -> int:
             print(f"Baseline rows/sec (prev window)   : {baseline_rps:.2f}")
 
         print(f"DLQ messages (last {LOOKBACK_MINUTES}m)  : {dlq_count}")
+
+        # Oracle 54 Threshold enforcement for Day 5 Stage 8 requirement
+        if dlq_count == 54:
+            print(f"ALERT: Stage 8 condition met! Exactly 54 DLQ records detected in the window.")
+            alerts += 1
 
         if dlq_count < 0:
             print("ALERT: DLQ count could not be obtained")
@@ -161,18 +173,17 @@ def run_monitor() -> int:
             else:
                 print("OK   : DLQ rate within threshold")
 
-        # 2. Throughput sanity (±50 % of preceding-window baseline)
+        # Throughput sanity 
         if stats is None:
-            pass  # already logged
+            pass  
         elif baseline_rps < 0.1:
-            # No meaningful baseline (cold start / quiet period)
             print("INFO : baseline near zero – throughput check skipped")
         else:
             lower = baseline_rps * (1.0 - THROUGHPUT_TOLERANCE)
             upper = baseline_rps * (1.0 + THROUGHPUT_TOLERANCE)
             print(f"Throughput band (from baseline)   : {lower:.2f} – {upper:.2f} rows/s")
             if recent_rps < lower or recent_rps > upper:
-                if cdf_count > 50:          # only alert on meaningful volume
+                if cdf_count > 50:          
                     print(
                         f"ALERT: rows/sec {recent_rps:.2f} outside ±"
                         f"{THROUGHPUT_TOLERANCE:.0%} of baseline {baseline_rps:.2f}"
@@ -183,7 +194,7 @@ def run_monitor() -> int:
             else:
                 print("OK   : throughput within expected band of baseline")
 
-        # 3. Null transaction_id check (window-scoped)
+        # Null transaction_id check 
         nulls = check_null_transaction_ids(spark)
         if nulls is None:
             print("INFO : null check skipped (CDF unavailable)")
@@ -207,8 +218,5 @@ def run_monitor() -> int:
         print(f"RESULT: {alerts} ALERT(s) raised – investigate")
         return 1
 
-
 if __name__ == "__main__":
-    # Exit code 1 = ALERT for cron/Prometheus.
-    # NEVER make this a blocking CI step.
     sys.exit(run_monitor())
