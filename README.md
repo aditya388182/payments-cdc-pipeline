@@ -84,6 +84,7 @@ Application / scripts/data_generator.py
 
 Spark runs **on the host** as `local[2]`. Everything else is Docker Compose. That is a deliberate design decision: Spark UI and checkpoint debugging stay on the host filesystem, and we do not pay ~2 GB of container overhead on a 16 GB box / `t3.xlarge`.
 
+![Architecture Diagram](docs/screenshots/architecture_diagram.png)
 ---
 
 ## Tech Stack
