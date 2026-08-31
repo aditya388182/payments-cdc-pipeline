@@ -1,0 +1,1 @@
+{"uid": "balance", "title": "Partition Balance", "panels": [{"type": "timeseries", "title": "Lag", "targets": [{"expr": "payments_cdc_topic_end_offset - payments_cdc_processed_offset"}]}]}
