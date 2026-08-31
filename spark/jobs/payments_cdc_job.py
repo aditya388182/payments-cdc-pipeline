@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import argparse
 import logging
 import sys
@@ -63,6 +62,11 @@ def build_spark(app_name: str = "payments-cdc") -> SparkSession:
     )
     return builder.getOrCreate()
 
+def commit_ledger(spark: SparkSession, batch_id: int, commit: bool = True) -> bool:
+    if not commit: return False
+    df = spark.createDataFrame([(APP_ID, int(batch_id), datetime.now(timezone.utc))], schema="app_id STRING, batch_id BIGINT, committed_at TIMESTAMP")
+    df.write.format("delta").mode("append").save(LEDGER_PATH)
+    return True
 
 # Ledger helpers (Safeguard #1 – commit flag + exact-match)
 def already_committed(spark: SparkSession, batch_id: int) -> bool:
@@ -123,6 +127,9 @@ def merge_batch(spark: SparkSession, staged: DataFrame) -> int:
     if n == 0:
         return 0
 
+def merge_batch(spark: SparkSession, staged: DataFrame) -> int:
+    n = staged.count()
+    if n == 0: return 0
     delta_table = DeltaTable.forPath(spark, TABLE_PATH)
     (
         delta_table.alias("target")
@@ -264,6 +271,14 @@ def run_stream(starting_offsets: str = "earliest") -> None:
     logger.info("[stream] Streaming query started. Awaiting termination...")
     query.awaitTermination()
 
+def run_stream() -> None:
+    global global_query
+    spark = build_spark()
+    reg = get_merchant_registry()
+    raw = spark.readStream.format("kafka").option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP).option("subscribe", TOPIC).option("startingOffsets", "earliest").option("failOnDataLoss", "false").load()
+    global_query = raw.writeStream.foreachBatch(foreach_batch_wrapper).option("checkpointLocation", CHECKPOINT).trigger(processingTime="10 seconds").start()
+    logger.info("Streaming query started. Awaiting termination...")
+    global_query.awaitTermination()
 
 # CLI
 def main() -> None:
