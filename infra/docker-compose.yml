@@ -108,8 +108,6 @@ services:
     container_name: pushgateway
     ports:
       - "9091:9091"
-    networks:
-      - payments-net
 
   prometheus:
     image: prom/prometheus:v2.53.0
@@ -118,8 +116,6 @@ services:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
     ports:
       - "9090:9090"
-    networks:
-      - payments-net
 
   grafana:
     image: grafana/grafana:11.1.0
@@ -131,5 +127,3 @@ services:
       - ./grafana/dashboards:/var/lib/grafana/dashboards
     ports:
       - "3000:3000"
-    networks:
-      - payments-net
