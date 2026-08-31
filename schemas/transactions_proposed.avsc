@@ -74,13 +74,13 @@
                   },
                   "connect.name": "org.apache.kafka.connect.data.Decimal",
                   "logicalType": "decimal"
-                }, 
-                {
-                 "name": "channel",
-                 "type": ["null", "string"],
-                 "default": null
-        }
+                }
               ],
+              "default": null
+            },
+            {
+              "name": "channel",
+              "type": ["null", "string"],
               "default": null
             }
           ],
