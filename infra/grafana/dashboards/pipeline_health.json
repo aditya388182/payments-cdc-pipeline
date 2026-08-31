@@ -1,1 +1,184 @@
-{"uid": "health", "title": "Pipeline Health", "panels": [{"type": "timeseries", "title": "Heartbeat", "targets": [{"expr": "time() - payments_cdc_heartbeat_timestamp_seconds"}]}]}
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Job heartbeat age (s) — alert if > 60",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 30 },
+              { "color": "red", "value": 60 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "time() - payments_cdc_heartbeat_timestamp_seconds",
+          "legendFormat": "heartbeat age"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Last batch input rows",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        { "refId": "A", "expr": "payments_cdc_batch_input_rows", "legendFormat": "input" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Last batch merged rows",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        { "refId": "A", "expr": "payments_cdc_batch_merged_rows", "legendFormat": "merged" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Last batch DLQ rows",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 10 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "targets": [
+        { "refId": "A", "expr": "payments_cdc_batch_dlq_rows", "legendFormat": "dlq" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Batch duration vs 10s trigger (backpressure if above the line)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "spanNulls": true } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "10s trigger" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "dash": [8, 4], "fill": "dash" } },
+              { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        { "refId": "A", "expr": "payments_cdc_batch_duration_seconds", "legendFormat": "batch duration" },
+        { "refId": "B", "expr": "vector(10)", "legendFormat": "10s trigger" }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Batch input / merged / DLQ rows",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 40, "spanNulls": true } },
+        "overrides": []
+      },
+      "targets": [
+        { "refId": "A", "expr": "payments_cdc_batch_input_rows", "legendFormat": "input" },
+        { "refId": "B", "expr": "payments_cdc_batch_merged_rows", "legendFormat": "merged" },
+        { "refId": "C", "expr": "payments_cdc_batch_dlq_rows", "legendFormat": "dlq" }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "DLQ rate vs 0.1% of input (reject-spike threshold)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit", "min": 0, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 8, "spanNulls": true } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "0.1% threshold" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "dash": [6, 4], "fill": "dash" } },
+              { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "payments_cdc_batch_dlq_rows / clamp_min(payments_cdc_batch_input_rows, 1)",
+          "legendFormat": "dlq / input"
+        },
+        { "refId": "B", "expr": "vector(0.001)", "legendFormat": "0.1% threshold" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "End-to-end consumption lag (end offset − processed offset)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 15, "spanNulls": true } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "payments_cdc_topic_end_offset - payments_cdc_processed_offset",
+          "legendFormat": "p{{partition}}"
+        }
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["payments-cdc", "day6"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Pipeline Health",
+  "uid": "payments-cdc-pipeline-health",
+  "version": 1
+}

@@ -1,54 +1,107 @@
+from __future__ import annotations
+
+import uuid
+
 import pytest
-from pyspark.sql import SparkSession, Row
-from pyspark.sql import functions as F
-from pyspark.sql.window import Window
+from pyspark.sql import Row, SparkSession
+from pyspark.sql import types as T
+
+from spark.jobs.payments_cdc_job import dedup_latest
+
 
 @pytest.fixture(scope="session")
 def spark():
-    return SparkSession.builder.master("local[2]").appName("dedup-test").getOrCreate()
-
-def apply_dedup(df):
-    """Replicates the CDC deduplication window logic"""
-    window_spec = Window.partitionBy("transaction_id").orderBy(
-        F.col("lsn").desc(), F.col("updated_at").desc()
+    session = (
+        SparkSession.builder.master("local[2]")
+        .appName("test-dedup")
+        .config("spark.ui.enabled", "false")
+        .config("spark.sql.shuffle.partitions", "4")
+        .getOrCreate()
     )
-    return df.withColumn("rn", F.row_number().over(window_spec)) \
-             .filter(F.col("rn") == 1).drop("rn")
+    yield session
+    session.stop()
 
-def test_in_order(spark):
-    df = spark.createDataFrame([
-        Row(transaction_id="1", lsn=100, updated_at=1000, is_delete=False),
-        Row(transaction_id="1", lsn=110, updated_at=1100, is_delete=False)
-    ])
-    res = apply_dedup(df).collect()
-    assert len(res) == 1
-    assert res[0].lsn == 110
 
-def test_out_of_order(spark):
-    df = spark.createDataFrame([
-        Row(transaction_id="2", lsn=120, updated_at=1200, is_delete=False),
-        Row(transaction_id="2", lsn=110, updated_at=1100, is_delete=False)
-    ])
-    res = apply_dedup(df).collect()
-    assert len(res) == 1
-    assert res[0].lsn == 120
+SCHEMA = T.StructType(
+    [
+        T.StructField("transaction_id", T.StringType(), False),
+        T.StructField("merchant_id", T.StringType(), True),
+        T.StructField("amount_minor", T.LongType(), True),
+        T.StructField("currency", T.StringType(), True),
+        T.StructField("status", T.StringType(), True),
+        T.StructField("lsn", T.LongType(), False),
+        T.StructField("is_delete", T.BooleanType(), False),
+        T.StructField("op", T.StringType(), True),
+        T.StructField("offset", T.LongType(), True),
+    ]
+)
 
-def test_duplicate_lsn_determinism(spark):
-    df = spark.createDataFrame([
-        Row(transaction_id="3", lsn=130, updated_at=1300, is_delete=False),
-        Row(transaction_id="3", lsn=130, updated_at=1305, is_delete=False)
-    ])
-    res = apply_dedup(df).collect()
-    assert len(res) == 1
-    assert res[0].updated_at == 1305
 
-def test_delete_before_update_trio(spark):
-    df = spark.createDataFrame([
-        Row(transaction_id="4", lsn=100, updated_at=1000, is_delete=False), # c@100
-        Row(transaction_id="4", lsn=140, updated_at=1400, is_delete=True),  # d@140
-        Row(transaction_id="4", lsn=120, updated_at=1200, is_delete=False)  # u@120 (late)
+def _tid() -> str:
+    return str(uuid.uuid4())
+
+
+def _rows(spark, records):
+    return spark.createDataFrame(records, schema=SCHEMA)
+
+
+def test_in_order_keeps_highest_lsn(spark):
+    tid = _tid()
+    df = _rows(spark, [
+        Row(tid, "MERCH_001", 100, "USD", "PENDING", 10, False, "c", 1),
+        Row(tid, "MERCH_001", 100, "USD", "SETTLED", 20, False, "u", 2),
+        Row(tid, "MERCH_001", 100, "USD", "SETTLED", 30, False, "u", 3),
     ])
-    res = apply_dedup(df).collect()
-    assert len(res) == 1
-    assert res[0].lsn == 140
-    assert res[0].is_delete == True
+    out = dedup_latest(df).collect()
+    assert len(out) == 1 and out[0]["lsn"] == 30 and out[0]["status"] == "SETTLED"
+
+
+def test_out_of_order_still_keeps_highest_lsn(spark):
+    tid = _tid()
+    df = _rows(spark, [
+        Row(tid, "MERCH_001", 100, "USD", "SETTLED", 30, False, "u", 3),
+        Row(tid, "MERCH_001", 100, "USD", "PENDING", 10, False, "c", 1),
+        Row(tid, "MERCH_001", 250, "USD", "SETTLED", 40, False, "u", 4),
+        Row(tid, "MERCH_001", 100, "USD", "SETTLED", 20, False, "u", 2),
+    ])
+    out = dedup_latest(df).collect()
+    assert len(out) == 1 and out[0]["lsn"] == 40 and out[0]["amount_minor"] == 250
+
+
+def test_duplicate_lsn_is_deterministic_one_survivor(spark):
+    tid = _tid()
+    df = _rows(spark, [
+        Row(tid, "MERCH_001", 100, "USD", "PENDING", 50, False, "u", 10),
+        Row(tid, "MERCH_001", 999, "EUR", "FAILED", 50, False, "u", 11),
+        Row(tid, "MERCH_001", 100, "USD", "PENDING", 50, False, "u", 10),
+    ])
+    out = dedup_latest(df).collect()
+    assert len(out) == 1 and out[0]["lsn"] == 50 and out[0]["offset"] == 11
+    assert out[0]["amount_minor"] == dedup_latest(df).collect()[0]["amount_minor"]
+
+
+def test_independent_keys_do_not_collapse_together(spark):
+    a, b = _tid(), _tid()
+    df = _rows(spark, [
+        Row(a, "MERCH_001", 100, "USD", "PENDING", 1, False, "c", 1),
+        Row(b, "MERCH_002", 200, "EUR", "PENDING", 2, False, "c", 2),
+        Row(a, "MERCH_001", 100, "USD", "SETTLED", 3, False, "u", 3),
+    ])
+    out = {r["transaction_id"]: r for r in dedup_latest(df).collect()}
+    assert set(out) == {a, b}
+    assert out[a]["lsn"] == 3 and out[b]["lsn"] == 2
+
+
+def test_delete_before_update_trio_lands_on_delete(spark):
+    tid = _tid()
+    df = _rows(spark, [
+        Row(tid, "MERCH_001", 100, "USD", "PENDING", 100, False, "c", 1),
+        Row(tid, "MERCH_001", 100, "USD", "PENDING", 140, True, "d", 2),
+        Row(tid, "MERCH_001", 150, "USD", "SETTLED", 120, False, "u", 3),
+    ])
+    out = dedup_latest(df).collect()
+    assert len(out) == 1 and out[0]["lsn"] == 140 and out[0]["is_delete"] is True
+
+
+def test_empty_batch(spark):
+    assert dedup_latest(spark.createDataFrame([], schema=SCHEMA)).collect() == []

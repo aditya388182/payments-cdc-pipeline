@@ -1,1 +1,126 @@
-{"uid": "balance", "title": "Partition Balance", "panels": [{"type": "timeseries", "title": "Lag", "targets": [{"expr": "payments_cdc_topic_end_offset - payments_cdc_processed_offset"}]}]}
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Topic end offset by partition (sidecar)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "drawStyle": "line", "lineWidth": 2, "spanNulls": true } },
+        "overrides": []
+      },
+      "targets": [
+        { "refId": "A", "expr": "payments_cdc_topic_end_offset", "legendFormat": "end p{{partition}}" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Processed offset by partition (query.lastProgress)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "drawStyle": "line", "lineWidth": 2, "spanNulls": true } },
+        "overrides": []
+      },
+      "targets": [
+        { "refId": "A", "expr": "payments_cdc_processed_offset", "legendFormat": "processed p{{partition}}" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Consumption lag by partition (end − processed)",
+      "gridPos": { "h": 9, "w": 16, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 20, "spanNulls": true } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "payments_cdc_topic_end_offset - payments_cdc_processed_offset",
+          "legendFormat": "lag p{{partition}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Max partition lag",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1000 },
+              { "color": "red", "value": 10000 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(payments_cdc_topic_end_offset - payments_cdc_processed_offset)",
+          "legendFormat": "max lag"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Lag spread (max − min) — hot partition detector",
+      "gridPos": { "h": 5, "w": 8, "x": 16, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 500 },
+              { "color": "red", "value": 5000 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(payments_cdc_topic_end_offset - payments_cdc_processed_offset) - min(payments_cdc_topic_end_offset - payments_cdc_processed_offset)",
+          "legendFormat": "spread"
+        }
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["payments-cdc", "day6", "partitions"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Partition Balance",
+  "uid": "payments-cdc-partition-balance",
+  "version": 1
+}
