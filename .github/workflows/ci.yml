@@ -12,38 +12,47 @@ jobs:
 
       - name: Start Ephemeral Kafka & Schema Registry
         run: |
-          docker network create confluent
+          cat << 'EOF' > docker-compose-ci.yml
+          version: '3.8'
+          services:
+            zookeeper:
+              image: confluentinc/cp-zookeeper:7.3.0
+              environment:
+                ZOOKEEPER_CLIENT_PORT: 2181
+                ZOOKEEPER_TICK_TIME: 2000
+            kafka:
+              image: confluentinc/cp-kafka:7.3.0
+              depends_on:
+                - zookeeper
+              environment:
+                KAFKA_BROKER_ID: 1
+                KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+                KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+                KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+                KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+                KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+            registry:
+              image: confluentinc/cp-schema-registry:7.3.0
+              depends_on:
+                - kafka
+              ports:
+                - "8081:8081"
+              environment:
+                SCHEMA_REGISTRY_HOST_NAME: registry
+                SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:29092
+          EOF
           
-          docker run -d --name zookeeper --network confluent \
-            -e ZOOKEEPER_CLIENT_PORT=2181 \
-            confluentinc/cp-zookeeper:7.3.0
-            
-          docker run -d --name kafka --network confluent \
-            -e KAFKA_BROKER_ID=1 \
-            -e KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181 \
-            -e KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT \
-            -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092 \
-            -e KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT \
-            -e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
-            confluentinc/cp-kafka:7.3.0
-            
-          docker run -d --name registry --network confluent -p 8081:8081 \
-            -e SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS=PLAINTEXT://kafka:9092 \
-            -e SCHEMA_REGISTRY_HOST_NAME=localhost \
-            confluentinc/cp-schema-registry:7.3.0
+          docker compose -f docker-compose-ci.yml up -d
           
-          echo "Waiting for Schema Registry to boot (can take up to 45s)..."
+          echo "Waiting for Schema Registry..."
           timeout 90 bash -c 'while [[ "$(curl -s -o /dev/null -w ''%{http_code}'' localhost:8081)" != "200" ]]; do sleep 2; done' || {
-            echo "--- Kafka Logs ---"
-            docker logs kafka
-            echo "--- Registry Logs ---"
-            docker logs registry
+            docker compose -f docker-compose-ci.yml logs
             exit 1
           }
 
       - name: Register V2 Baseline
         run: |
-          if [ ! -f schemas/transactions_v2.avsc ]; then exit 1; fi
+          if [ ! -f schemas/transactions_v2.avsc ]; then echo "Baseline schema missing"; exit 1; fi
           PAYLOAD=$(jq -Rs '{schema: .}' schemas/transactions_v2.avsc)
           curl -X POST -H "Content-Type: application/vnd.schemaregistry.v1+json" \
             --data "$PAYLOAD" \
