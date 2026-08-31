@@ -1,0 +1,1 @@
+{"uid": "window", "title": "Inconsistency Window", "panels": [{"type": "timeseries", "title": "Window", "targets": [{"expr": "time() - payments_cdc_last_ledger_commit_timestamp_seconds"}]}]}

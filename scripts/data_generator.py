@@ -17,9 +17,18 @@ from psycopg2.extras import execute_values
 # Configuration defaults
 DEFAULT_RATE = 80          # transactions per second
 DEFAULT_DURATION = 0       # 0 = run forever
+
+# --- Whale AMOUNT skew (occasional large transactions) ---
 WHALE_PROBABILITY = 0.03   # 3% chance of a whale amount
 WHALE_MIN = 500_000        # $5,000.00 in minor units
 WHALE_MAX = 5_000_000      # $50,000.00
+
+# --- Whale MERCHANT skew (one merchant dominates volume) ---
+# This is what produces the Day-4 hot-key / straggler demo. In whale mode a
+# single merchant receives WHALE_MERCHANT_SHARE of all INSERTs, so a
+# groupBy(merchant_id) aggregation lands most of the work on one task.
+WHALE_MERCHANT_ID = "MERCH_007"
+WHALE_MERCHANT_SHARE = 0.40   # this merchant gets 40% of inserts in whale mode
 
 STATUSES = ["PENDING", "SETTLED", "FAILED"]
 EVENT_TYPES = ["AUTHORIZATION", "CAPTURE", "REFUND", "CHARGEBACK"]
@@ -74,6 +83,14 @@ def generate_amount(whale_mode: bool) -> int:
     return random.randint(100, 99_900)
 
 
+def pick_merchant(merchant_ids: List[str], whale_mode: bool) -> str:
+    """In whale mode, WHALE_MERCHANT_ID wins WHALE_MERCHANT_SHARE of inserts;
+    otherwise merchants are chosen uniformly at random."""
+    if whale_mode and random.random() < WHALE_MERCHANT_SHARE:
+        return WHALE_MERCHANT_ID
+    return random.choice(merchant_ids)
+
+
 def do_inserts(conn, merchant_ids: List[str], count: int, whale_mode: bool) -> int:
     if count <= 0:
         return 0
@@ -84,7 +101,7 @@ def do_inserts(conn, merchant_ids: List[str], count: int, whale_mode: bool) -> i
         rows.append(
             (
                 str(uuid.uuid4()),
-                random.choice(merchant_ids),
+                pick_merchant(merchant_ids, whale_mode),
                 generate_amount(whale_mode),
                 random.choice(CURRENCIES),
                 random.choice(STATUSES),
@@ -172,7 +189,11 @@ def main() -> None:
     parser.add_argument(
         "--whale",
         action="store_true",
-        help="Enable occasional large 'whale' amounts",
+        help=(
+            f"Enable whale mode: {WHALE_MERCHANT_ID} receives "
+            f"{int(WHALE_MERCHANT_SHARE * 100)}% of inserts (hot-key skew) and "
+            "occasional large 'whale' amounts are emitted"
+        ),
     )
     parser.add_argument(
         "--batch-size",
@@ -196,6 +217,13 @@ def main() -> None:
         sys.exit(1)
     print(f"[generator] {len(merchant_ids)} merchants loaded")
 
+    if args.whale and WHALE_MERCHANT_ID not in merchant_ids:
+        print(
+            f"[generator] WARNING: whale merchant {WHALE_MERCHANT_ID} not found "
+            f"in merchants table – whale concentration will not apply.",
+            file=sys.stderr,
+        )
+
     print("[generator] Loading sample of existing transaction_ids ...")
     existing_ids = load_existing_transaction_ids(conn)
     print(f"[generator] {len(existing_ids)} existing IDs available for UPDATE/DELETE")
@@ -205,6 +233,11 @@ def main() -> None:
         f"duration={'forever' if args.duration == 0 else args.duration}, "
         f"whale={args.whale}"
     )
+    if args.whale:
+        print(
+            f"[generator] Whale mode ON – {WHALE_MERCHANT_ID} gets "
+            f"~{int(WHALE_MERCHANT_SHARE * 100)}% of inserts"
+        )
     print("[generator] Mix ≈ 70% INSERT / 20% UPDATE / 10% DELETE")
     print("[generator] Press Ctrl+C to stop cleanly\n")
 

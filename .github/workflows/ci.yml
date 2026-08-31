@@ -1,0 +1,78 @@
+name: Schema Compatibility CI
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  schema-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Start Ephemeral Kafka & Schema Registry (KRaft)
+        run: |
+          cat << 'EOF' > docker-compose-ci.yml
+          version: '3.8'
+          services:
+            kafka:
+              image: confluentinc/cp-kafka:7.6.1
+              environment:
+                KAFKA_NODE_ID: 1
+                KAFKA_PROCESS_ROLES: broker,controller
+                KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+                KAFKA_LISTENERS: PLAINTEXT://kafka:9092,CONTROLLER://kafka:9093,PLAINTEXT_HOST://0.0.0.0:29092
+                KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+                KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
+                KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+                KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+                KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+                KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+                KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+                CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+            
+            registry:
+              image: confluentinc/cp-schema-registry:7.6.1
+              depends_on:
+                - kafka
+              ports:
+                - "8081:8081"
+              environment:
+                SCHEMA_REGISTRY_HOST_NAME: registry
+                SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:9092
+                SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+          EOF
+          
+          docker compose -f docker-compose-ci.yml up -d
+          
+          echo "Waiting for Schema Registry..."
+          timeout 90 bash -c 'while [[ "$(curl -s -o /dev/null -w ''%{http_code}'' localhost:8081)" != "200" ]]; do sleep 2; done' || {
+            docker compose -f docker-compose-ci.yml logs
+            exit 1
+          }
+
+      - name: Register V2 Baseline
+        run: |
+          if [ ! -f schemas/transactions_v2.avsc ]; then echo "Baseline schema missing"; exit 1; fi
+          PAYLOAD=$(jq -Rs '{schema: .}' schemas/transactions_v2.avsc)
+          curl -X POST -H "Content-Type: application/vnd.schemaregistry.v1+json" \
+            --data "$PAYLOAD" \
+            http://localhost:8081/subjects/payments.public.transactions-value/versions
+
+      - name: Test Proposed Schema
+        run: |
+          if [ ! -f schemas/transactions_proposed.avsc ]; then
+            echo "No proposed schema found. Skipping check."
+            exit 0
+          fi
+          PAYLOAD=$(jq -Rs '{schema: .}' schemas/transactions_proposed.avsc)
+          HTTP_STATUS=$(curl -s -o /tmp/response.json -w "%{http_code}" -X POST -H "Content-Type: application/vnd.schemaregistry.v1+json" --data "$PAYLOAD" http://localhost:8081/compatibility/subjects/payments.public.transactions-value/versions/latest)
+          
+          cat /tmp/response.json
+          IS_COMPATIBLE=$(jq '.is_compatible' /tmp/response.json)
+          
+          if [ "$IS_COMPATIBLE" != "true" ]; then
+            echo "SCHEMA BREAKING CHANGE DETECTED!"
+            exit 1
+          fi
+          echo "Schema is fully compatible."

@@ -1,0 +1,230 @@
+{
+  "type": "record",
+  "name": "Envelope",
+  "namespace": "payments.public.transactions",
+  "fields": [
+    {
+      "name": "before",
+      "type": [
+        "null",
+        {
+          "type": "record",
+          "name": "Value",
+          "fields": [
+            {
+              "name": "transaction_id",
+              "type": {
+                "type": "string",
+                "connect.version": 1,
+                "connect.name": "io.debezium.data.Uuid"
+              }
+            },
+            {
+              "name": "merchant_id",
+              "type": "string"
+            },
+            {
+              "name": "amount_minor",
+              "type": "long"
+            },
+            {
+              "name": "currency",
+              "type": "string"
+            },
+            {
+              "name": "status",
+              "type": "string"
+            },
+            {
+              "name": "event_type",
+              "type": "string"
+            },
+            {
+              "name": "created_at",
+              "type": {
+                "type": "string",
+                "connect.version": 1,
+                "connect.default": "1970-01-01T00:00:00.000000Z",
+                "connect.name": "io.debezium.time.ZonedTimestamp"
+              },
+              "default": "1970-01-01T00:00:00.000000Z"
+            },
+            {
+              "name": "updated_at",
+              "type": {
+                "type": "string",
+                "connect.version": 1,
+                "connect.default": "1970-01-01T00:00:00.000000Z",
+                "connect.name": "io.debezium.time.ZonedTimestamp"
+              },
+              "default": "1970-01-01T00:00:00.000000Z"
+            },
+            {
+              "name": "risk_score",
+              "type": [
+                "null",
+                {
+                  "type": "bytes",
+                  "scale": 2,
+                  "precision": 5,
+                  "connect.version": 1,
+                  "connect.parameters": {
+                    "scale": "2",
+                    "connect.decimal.precision": "5"
+                  },
+                  "connect.name": "org.apache.kafka.connect.data.Decimal",
+                  "logicalType": "decimal"
+                }
+              ],
+              "default": null
+            },
+            {
+              "name": "channel",
+              "type": ["null", "string"],
+              "default": null
+            }
+          ],
+          "connect.name": "payments.public.transactions.Value"
+        }
+      ],
+      "default": null
+    },
+    {
+      "name": "after",
+      "type": [
+        "null",
+        "Value"
+      ],
+      "default": null
+    },
+    {
+      "name": "source",
+      "type": {
+        "type": "record",
+        "name": "Source",
+        "namespace": "io.debezium.connector.postgresql",
+        "fields": [
+          {
+            "name": "version",
+            "type": "string"
+          },
+          {
+            "name": "connector",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "ts_ms",
+            "type": "long"
+          },
+          {
+            "name": "snapshot",
+            "type": [
+              {
+                "type": "string",
+                "connect.version": 1,
+                "connect.parameters": {
+                  "allowed": "true,last,false,incremental"
+                },
+                "connect.default": "false",
+                "connect.name": "io.debezium.data.Enum"
+              },
+              "null"
+            ],
+            "default": "false"
+          },
+          {
+            "name": "db",
+            "type": "string"
+          },
+          {
+            "name": "sequence",
+            "type": [
+              "null",
+              "string"
+            ],
+            "default": null
+          },
+          {
+            "name": "schema",
+            "type": "string"
+          },
+          {
+            "name": "table",
+            "type": "string"
+          },
+          {
+            "name": "txId",
+            "type": [
+              "null",
+              "long"
+            ],
+            "default": null
+          },
+          {
+            "name": "lsn",
+            "type": [
+              "null",
+              "long"
+            ],
+            "default": null
+          },
+          {
+            "name": "xmin",
+            "type": [
+              "null",
+              "long"
+            ],
+            "default": null
+          }
+        ],
+        "connect.name": "io.debezium.connector.postgresql.Source"
+      }
+    },
+    {
+      "name": "op",
+      "type": "string"
+    },
+    {
+      "name": "ts_ms",
+      "type": [
+        "null",
+        "long"
+      ],
+      "default": null
+    },
+    {
+      "name": "transaction",
+      "type": [
+        "null",
+        {
+          "type": "record",
+          "name": "block",
+          "namespace": "event",
+          "fields": [
+            {
+              "name": "id",
+              "type": "string"
+            },
+            {
+              "name": "total_order",
+              "type": "long"
+            },
+            {
+              "name": "data_collection_order",
+              "type": "long"
+            }
+          ],
+          "connect.version": 1,
+          "connect.name": "event.block"
+        }
+      ],
+      "default": null
+    }
+  ],
+  "connect.version": 1,
+  "connect.name": "payments.public.transactions.Envelope"
+}
