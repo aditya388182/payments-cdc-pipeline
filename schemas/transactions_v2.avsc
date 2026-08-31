@@ -77,6 +77,14 @@
                 }
               ],
               "default": null
+            },
+            {
+              "name": "channel",
+              "type": [
+                "null",
+                "string"
+              ],
+              "default": null
             }
           ],
           "connect.name": "payments.public.transactions.Value"
