@@ -17,11 +17,7 @@ from spark.utils.validator import validate
 from spark.utils.dlq_writer import write_to_dlq, merchants, get_merchant_registry
 from spark.utils.metrics_listener import push_metrics, extract_processed_offsets
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
-    stream=sys.stdout,
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s - %(message)s", stream=sys.stdout)
 logger = logging.getLogger("payments.cdc")
 
 KAFKA_BOOTSTRAP = "localhost:29092"
@@ -41,9 +37,7 @@ def build_spark(app_name: str = "payments-cdc") -> SparkSession:
         "org.postgresql:postgresql:42.7.3",
     ])
     builder = (
-        SparkSession.builder
-        .appName(app_name)
-        .master("local[2]")
+        SparkSession.builder.appName(app_name).master("local[2]")
         .config("spark.jars.packages", packages)
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
         .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
@@ -53,31 +47,22 @@ def build_spark(app_name: str = "payments-cdc") -> SparkSession:
         .config("spark.hadoop.fs.s3a.path.style.access", "true")
         .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
         .config("spark.sql.shuffle.partitions", "8")
-        .config("spark.sql.adaptive.enabled", "true")
-        .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
         .config("spark.sql.session.timeZone", "UTC")
-        .config("spark.databricks.delta.properties.defaults.enableChangeDataFeed", "true")
     )
     return builder.getOrCreate()
 
 def already_committed(spark: SparkSession, batch_id: int) -> bool:
-    if not DeltaTable.isDeltaTable(spark, LEDGER_PATH):
-        return False
-    ledger = spark.read.format("delta").load(LEDGER_PATH)
-    return ledger.filter((F.col("app_id") == APP_ID) & (F.col("batch_id") == batch_id)).count() > 0
+    if not DeltaTable.isDeltaTable(spark, LEDGER_PATH): return False
+    return spark.read.format("delta").load(LEDGER_PATH).filter((F.col("app_id") == APP_ID) & (F.col("batch_id") == batch_id)).count() > 0
 
 def commit_ledger(spark: SparkSession, batch_id: int, commit: bool = True) -> bool:
-    if not commit:
-        return False
+    if not commit: return False
     df = spark.createDataFrame([(APP_ID, int(batch_id), datetime.now(timezone.utc))], schema="app_id STRING, batch_id BIGINT, committed_at TIMESTAMP")
     df.write.format("delta").mode("append").save(LEDGER_PATH)
     return True
 
 def dedup_latest(df: DataFrame) -> DataFrame:
-    order = [F.col("lsn").desc()]
-    if "offset" in df.columns:
-        order.append(F.col("offset").desc())
-    w = Window.partitionBy("transaction_id").orderBy(*order)
+    w = Window.partitionBy("transaction_id").orderBy(F.col("lsn").desc())
     return df.withColumn("_rn", F.row_number().over(w)).filter(F.col("_rn") == 1).drop("_rn")
 
 def merge_batch(spark: SparkSession, staged: DataFrame) -> int:
@@ -91,8 +76,7 @@ def merge_batch(spark: SparkSession, staged: DataFrame) -> int:
 
 def process_batch(batch_df: DataFrame, batch_id: int, commit: bool = True) -> None:
     spark = batch_df.sparkSession
-    if already_committed(spark, batch_id):
-        return
+    if already_committed(spark, batch_id): return
     batch_df.persist()
     try:
         t0 = time.time()
@@ -111,12 +95,10 @@ def process_batch(batch_df: DataFrame, batch_id: int, commit: bool = True) -> No
             committed = commit_ledger(spark, batch_id, commit=commit)
 
             batch_seconds = time.time() - t0
-            
             if committed:
                 last_commit_df = spark.read.format("delta").load(LEDGER_PATH).filter(F.col("app_id") == APP_ID).orderBy(F.col("batch_id").desc()).limit(1).collect()
                 last_ts = last_commit_df[0]["committed_at"].timestamp() if last_commit_df else time.time()
                 push_metrics(batch_id, n_in, n_merged, n_dlq, batch_seconds, last_ts, {})
-                
             logger.info("batch_id=%s finished - in=%d merged=%d dlq=%d", batch_id, n_in, n_merged, n_dlq)
         finally:
             valid.unpersist()
@@ -135,30 +117,24 @@ def foreach_batch_wrapper(raw_batch: DataFrame, batch_id: int) -> None:
 
 global_query = None
 
-def run_stream(starting_offsets: str = "earliest") -> None:
+def run_stream() -> None:
     global global_query
     spark = build_spark()
     reg = get_merchant_registry()
-    raw = spark.readStream.format("kafka").option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP).option("subscribe", TOPIC).option("startingOffsets", starting_offsets).option("failOnDataLoss", "false").load()
+    raw = spark.readStream.format("kafka").option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP).option("subscribe", TOPIC).option("startingOffsets", "earliest").option("failOnDataLoss", "false").load()
     global_query = raw.writeStream.foreachBatch(foreach_batch_wrapper).option("checkpointLocation", CHECKPOINT).trigger(processingTime="10 seconds").start()
     logger.info("Streaming query started. Awaiting termination...")
     global_query.awaitTermination()
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Payments CDC Streaming job")
-    parser.add_argument("--starting-offsets", default="earliest", choices=["earliest", "latest"])
-    args = parser.parse_args()
-
     def handle_sigterm(signum, frame):
         logger.info("Received SIGTERM! Stopping query gracefully...")
         if global_query: global_query.stop()
-
     signal.signal(signal.SIGTERM, handle_sigterm)
-    
     try:
-        run_stream(starting_offsets=args.starting_offsets)
+        run_stream()
     except KeyboardInterrupt:
-        logger.info("Keyboard interrupt! Stopping query gracefully...")
+        logger.info("Keyboard interrupt! Stopping gracefully...")
         if global_query: global_query.stop()
 
 if __name__ == "__main__":
