@@ -1,0 +1,16 @@
+name: Deploy CDC Pipeline
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Deploy to EC2 (Stubbed)
+        run: |
+          echo "Syncing code to S3/EC2..."
+          echo "Issuing SIGTERM to running PySpark driver (query.stop())..."
+          echo "Starting updated driver..."

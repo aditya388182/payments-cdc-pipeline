@@ -1,0 +1,1 @@
+{"uid": "health", "title": "Pipeline Health", "panels": [{"type": "timeseries", "title": "Heartbeat", "targets": [{"expr": "time() - payments_cdc_heartbeat_timestamp_seconds"}]}]}

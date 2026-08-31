@@ -1,253 +1,288 @@
-#!/usr/bin/env python3
-
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
-from typing import Optional
+from datetime import datetime, timezone
 
-from delta.tables import DeltaTable
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
+from delta.tables import DeltaTable
 
-# Local imports
-from spark.utils.avro_deserializer import (
-    deserialize,
-    deserialize_by_schema_id,
-    latest_schema,
+# Day 4 + Day 5 utilities
+from spark.utils.avro_deserializer import deserialize_by_schema_id
+from spark.utils.validator import validate
+from spark.utils.dlq_writer import write_to_dlq, merchants, get_merchant_registry
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s – %(message)s",
+    stream=sys.stdout,
 )
+logger = logging.getLogger("payments.cdc")
 
-# Constants
-TABLE_PATH = "s3a://payments-lake/transactions"
-LEDGER_PATH = "s3a://payments-lake/_batch_ledger"
-CHECKPOINT_PATH = "s3a://payments-lake/checkpoints/payments-cdc"
-APP_ID = "payments_cdc_v1"
+# Constants – match Days 1-4
 KAFKA_BOOTSTRAP = "localhost:29092"
 TOPIC = "payments.public.transactions"
+CHECKPOINT = "s3a://payments-lake/checkpoints/payments-cdc"
+TABLE_PATH = "s3a://payments-lake/transactions"
+LEDGER_PATH = "s3a://payments-lake/_batch_ledger"
+APP_ID = "payments_cdc_v1"
 
 
-def build_spark(app_name: str = "payments_cdc_v1") -> SparkSession:
-    packages = ",".join(
-        [
-            "io.delta:delta-spark_2.12:3.1.0",
-            "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1",
-            "org.apache.spark:spark-avro_2.12:3.5.1",
-            "org.apache.hadoop:hadoop-aws:3.3.4",
-        ]
-    )
+# Spark session builder (preserves the working Day-2/4 package set)
+def build_spark(app_name: str = "payments-cdc") -> SparkSession:
+    packages = ",".join([
+        "io.delta:delta-spark_2.12:3.1.0",
+        "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1",
+        "org.apache.spark:spark-avro_2.12:3.5.1",
+        "org.apache.hadoop:hadoop-aws:3.3.4",
+        "com.amazonaws:aws-java-sdk-bundle:1.12.262",
+        "org.postgresql:postgresql:42.7.3",
+    ])
 
-    spark = (
-        SparkSession.builder.appName(app_name)
+    builder = (
+        SparkSession.builder
+        .appName(app_name)
         .master("local[2]")
         .config("spark.jars.packages", packages)
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-        .config(
-            "spark.sql.catalog.spark_catalog",
-            "org.apache.spark.sql.delta.catalog.DeltaCatalog",
-        )
-        # MinIO / S3A
+        .config("spark.sql.catalog.spark_catalog",
+                "org.apache.spark.sql.delta.catalog.DeltaCatalog")
         .config("spark.hadoop.fs.s3a.endpoint", "http://localhost:9000")
         .config("spark.hadoop.fs.s3a.access.key", "minioadmin")
         .config("spark.hadoop.fs.s3a.secret.key", "minioadmin")
         .config("spark.hadoop.fs.s3a.path.style.access", "true")
-        .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false")
-        # AQE + reasonable defaults for local
+        .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+        .config("spark.sql.shuffle.partitions", "8")
         .config("spark.sql.adaptive.enabled", "true")
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
-        .config("spark.sql.shuffle.partitions", "8")
-        .getOrCreate()
+        .config("spark.sql.session.timeZone", "UTC")
+        .config("spark.databricks.delta.properties.defaults.enableChangeDataFeed", "true")
     )
-    spark.sparkContext.setLogLevel("WARN")
-    return spark
+    return builder.getOrCreate()
 
 
-# Deduplication
-def dedup_latest(df: DataFrame) -> DataFrame:
-    w = Window.partitionBy("transaction_id").orderBy(F.col("lsn").desc())
+# Ledger helpers (Safeguard #1 – commit flag + exact-match)
+def already_committed(spark: SparkSession, batch_id: int) -> bool:
+    if not DeltaTable.isDeltaTable(spark, LEDGER_PATH):
+        logger.info("Ledger absent – treating batch_id=%s as new", batch_id)
+        return False
+
+    ledger = spark.read.format("delta").load(LEDGER_PATH)
     return (
-        df.withColumn("_rn", F.row_number().over(w))
-        .filter(F.col("_rn") == 1)
-        .drop("_rn")
+        ledger
+        .filter((F.col("app_id") == APP_ID) & (F.col("batch_id") == batch_id))
+        .limit(1)
+        .count() > 0
     )
 
 
-# MERGE with LSN monotonicity guard
-def merge_batch(spark: SparkSession, staged: DataFrame) -> None:
-    if staged.rdd.isEmpty():
-        print("[merge] empty batch – skipping")
+def commit_ledger(spark: SparkSession, batch_id: int, commit: bool = True) -> None:
+    if not commit:
+        logger.info("commit=False → skipping ledger write for batch_id=%s", batch_id)
         return
 
-    delta_table = DeltaTable.forPath(spark, TABLE_PATH)
+    df = spark.createDataFrame(
+        [(APP_ID, int(batch_id), datetime.now(timezone.utc))],
+        schema="app_id STRING, batch_id BIGINT, committed_at TIMESTAMP",
+    )
+    (
+        df.write
+          .format("delta")
+          .mode("append")
+          .save(LEDGER_PATH)
+    )
+    logger.info("Ledger committed batch_id=%s", batch_id)
 
+
+# Deduplication by latest LSN (deterministic when offset is available)
+def dedup_latest(df: DataFrame) -> DataFrame:
+    order = [F.col("lsn").desc()]
+    if "offset" in df.columns:
+        order.append(F.col("offset").desc())
+    else:
+        logger.warning(
+            "dedup_latest: no 'offset' column – equal-LSN ties resolve "
+            "NON-DETERMINISTICALLY. Add col('offset') to the deserializer "
+            "projection in avro_deserializer.py to close this gap."
+        )
+
+    w = Window.partitionBy("transaction_id").orderBy(*order)
+    return (
+        df.withColumn("_rn", F.row_number().over(w))
+          .filter(F.col("_rn") == 1)
+          .drop("_rn")
+    )
+
+
+# Soft-delete MERGE with LSN monotonicity guard (exactly-once mechanism #1)
+def merge_batch(spark: SparkSession, staged: DataFrame) -> int:
+    n = staged.count()
+    if n == 0:
+        return 0
+
+    delta_table = DeltaTable.forPath(spark, TABLE_PATH)
     (
         delta_table.alias("target")
         .merge(
             staged.alias("staged"),
             "target.transaction_id = staged.transaction_id",
         )
-        .whenMatchedDelete(
-            condition="staged.lsn > target.lsn AND staged.is_delete = true"
-        )
-        .whenMatchedUpdateAll(
-            condition="staged.lsn > target.lsn AND staged.is_delete = false"
-        )
-        .whenNotMatchedInsertAll(condition="staged.is_delete = false")
+        .whenMatchedUpdateAll(condition="staged.lsn > target.lsn")
+        .whenNotMatchedInsertAll()   # tombstones included – see policy note above
         .execute()
     )
-    print("[merge] MERGE completed")
+    logger.info("MERGE completed – %d staged rows", n)
+    return n
 
 
-# Batch Ledger (exactly-once)
-def already_committed(spark: SparkSession, batch_id: int) -> bool:
-    """Return True if this batch_id (or higher) has already been committed."""
-    try:
-        ledger = spark.read.format("delta").load(LEDGER_PATH)
-        row = (
-            ledger.filter(F.col("app_id") == APP_ID)
-            .agg(F.max("batch_id").alias("max_batch"))
-            .collect()[0]
-        )
-        max_batch = row["max_batch"]
-        if max_batch is None:
-            return False
-        return batch_id <= max_batch
-    except Exception:
-        # Ledger table does not exist till now, next day 
-        return False
-
-
-def commit_ledger(spark: SparkSession, batch_id: int) -> None:
-    (
-        spark.createDataFrame([(APP_ID, batch_id)], ["app_id", "batch_id"])
-        .write.format("delta")
-        .mode("append")
-        .save(LEDGER_PATH)
-    )
-    print(f"[ledger] committed batch_id={batch_id}")
-
-
-# process_batch 
+# Core batch processor (Day 5 gate order + single persist)
 def process_batch(
-    df: DataFrame,
+    batch_df: DataFrame,
     batch_id: int,
-    commit: bool = True,  # ← Safeguard #1: prevent ledger poisoning
+    commit: bool = True,
 ) -> None:
-    """
-    Core micro-batch logic.
+    spark = batch_df.sparkSession
 
-    commit=True  > normal streaming path (write to ledger)
-    commit=False > used by replay_offsets.py so that a high fake batch_id
-                   cannot poison the ledger and permanently skip future batches.
-    """
-    spark = df.sparkSession
-
-    if commit and already_committed(spark, batch_id):
-        print(f"[skip] batch {batch_id} already committed – skipping")
+    # 1. Ledger skip
+    if already_committed(spark, batch_id):
+        logger.info("batch_id=%s already committed – skipping", batch_id)
         return
 
-    print(f"[batch {batch_id}] incoming rows = {df.count()}")
+    # Persist BEFORE any action. The lineage includes a Kafka read, Confluent
+    # wire-format stripping, and schema-ID-dispatched Avro decode. Without
+    # this, every count / write below re-executes all of it.
+    batch_df.persist()
+    try:
+        n_in = batch_df.count()          # single scan of the batch
+        if n_in == 0:
+            # Reachable when a micro-batch contains ONLY Kafka tombstone
+            # records (tombstones.on.delete=true): non-empty at the wrapper,
+            # empty after the deserializer's .filter(col("e").isNotNull())
+            # drops the null-valued messages. Commit so the batch_id is
+            # recorded; there is nothing to merge.
+            logger.info("batch_id=%s empty after deserialize – nothing to do", batch_id)
+            commit_ledger(spark, batch_id, commit=commit)
+            return
 
-    # 1. Deduplicate to latest LSN per key
-    staged = dedup_latest(df)
-    print(f"[batch {batch_id}] after dedup = {staged.count()}")
+        # 2. 🔴 Synchronous validation gate (before anything touches Delta)
+        valid, invalid = validate(batch_df, merchants())
+        valid.persist()
+        invalid.persist()
+        try:
+            # 3. Quarantine
+            n_dlq = write_to_dlq(invalid)     # returns count; no extra action
 
-    # 2. Guarded MERGE
-    merge_batch(spark, staged)
+            # 4. Dedup by latest LSN
+            staged = dedup_latest(valid)
 
-    # 3. Commit to ledger only when requested
-    if commit:
-        commit_ledger(spark, batch_id)
-    else:
-        print(f"[batch {batch_id}] commit=False → ledger NOT updated")
+            # 5. Soft-delete MERGE (LSN guard + tombstone policy)
+            n_merged = merge_batch(spark, staged)
+
+            # 6. Ledger commit (respects commit flag)
+            commit_ledger(spark, batch_id, commit=commit)
+
+            logger.info(
+                "batch_id=%s finished – in=%d merged=%d dlq=%d",
+                batch_id, n_in, n_merged, n_dlq,
+            )
+        finally:
+            valid.unpersist()
+            invalid.unpersist()
+    finally:
+        batch_df.unpersist()
 
 
-# Streaming entrypoint
-def run_streaming(
-    spark: SparkSession,
-    starting_offsets: str = "earliest",
-    max_offsets_per_trigger: int = 5000,
-    use_schema_id_path: bool = False,
-) -> None:
-    raw = (
-        spark.readStream.format("kafka")
-        .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP)
-        .option("subscribe", TOPIC)
-        .option("startingOffsets", starting_offsets)
-        .option("maxOffsetsPerTrigger", max_offsets_per_trigger)
-        .option("failOnDataLoss", "false")
-        .load()
+# foreachBatch wrapper (schema-id path is the only production path – Day 4)
+def foreach_batch_wrapper(raw_batch: DataFrame, batch_id: int) -> None:
+    raw_batch.persist()
+    try:
+        # count() rather than rdd.isEmpty(): once persisted, count() reuses the
+        # cached blocks, while rdd.isEmpty() forces a conversion to RDD.
+        if raw_batch.count() == 0:
+            logger.info("batch_id=%s empty (no Kafka records) – skipping", batch_id)
+            return
+
+        # Day-4 production default – schema-id aware deserializer
+        flat = deserialize_by_schema_id(raw_batch)
+        process_batch(flat, batch_id, commit=True)
+    finally:
+        raw_batch.unpersist()
+
+
+# Streaming entry point
+def _path_exists(spark: SparkSession, path_str: str) -> bool:
+    """Hadoop-FS existence check (works for s3a:// against MinIO)."""
+    hadoop_conf = spark._jsc.hadoopConfiguration()
+    path = spark._jvm.org.apache.hadoop.fs.Path(path_str)
+    return path.getFileSystem(hadoop_conf).exists(path)
+
+
+def run_stream(starting_offsets: str = "earliest") -> None:
+    spark = build_spark()
+
+    # Force merchant cache load at startup (fail-closed: an empty set would
+    # reject 100% of traffic, so MerchantRegistry raises on first-load failure)
+    reg = get_merchant_registry()
+    logger.info("Startup – loaded %d merchants", len(reg.merchant_ids))
+    logger.info("[stream] using deserialize_by_schema_id (schema-evolution path)")
+
+    # Explicit checkpoint existence check. Removes the Day-4 §7.1 ambiguity:
+    # the log now states unambiguously whether this run resumed or started
+    # fresh, so "was this a restart?" can never again be a question that costs
+    # an afternoon.
+    resuming = _path_exists(spark, CHECKPOINT)
+    logger.info(
+        "[stream] checkpoint %s at %s – %s",
+        "EXISTS" if resuming else "ABSENT",
+        CHECKPOINT,
+        "resuming from checkpoint; startingOffsets is IGNORED"
+        if resuming
+        else f"FRESH START; startingOffsets={starting_offsets} APPLIES",
     )
 
-    if use_schema_id_path:
-        print("[stream] using deserialize_by_schema_id (schema-evolution path)")
-        parsed = deserialize_by_schema_id(raw)
-    else:
-        print("[stream] using single-schema deserialize path")
-        schema_json = latest_schema()
-        parsed = deserialize(raw, schema_json)
-
-    # Select only the columns needed for the MERGE
-    final_cols = [
-        "transaction_id",
-        "merchant_id",
-        "amount_minor",
-        "currency",
-        "status",
-        "event_type",
-        "created_at",
-        "updated_at",
-        "lsn",
-        "source_ts",
-        "is_delete",
-    ]
-    staged = parsed.select(*final_cols)
+    raw = (
+        spark.readStream
+             .format("kafka")
+             .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP)
+             .option("subscribe", TOPIC)
+             .option("startingOffsets", starting_offsets)
+             .option("failOnDataLoss", "false")
+             .load()
+    )
 
     query = (
-        staged.writeStream.foreachBatch(
-            lambda df, batch_id: process_batch(df, batch_id, commit=True)
-        )
-        .option("checkpointLocation", CHECKPOINT_PATH)
-        .trigger(processingTime="10 seconds")
-        .start()
+        raw.writeStream
+           .foreachBatch(foreach_batch_wrapper)
+           .option("checkpointLocation", CHECKPOINT)
+           .trigger(processingTime="10 seconds")
+           .start()
     )
 
-    print("[stream] Streaming query started. Awaiting termination...")
+    logger.info("[stream] Streaming query started. Awaiting termination...")
     query.awaitTermination()
 
 
+# CLI
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Payments CDC Streaming Job")
+    parser = argparse.ArgumentParser(
+        description="Payments CDC Structured Streaming job (Day 5 gate)"
+    )
     parser.add_argument(
         "--starting-offsets",
         default="earliest",
-        help="earliest | latest | JSON offsets",
-    )
-    parser.add_argument(
-        "--max-offsets",
-        type=int,
-        default=5000,
-        help="maxOffsetsPerTrigger",
-    )
-    parser.add_argument(
-        "--schema-id-path",
-        action="store_true",
-        help="Use per-message schema-id deserialization (Day-4 path)",
+        choices=["earliest", "latest"],
+        help=(
+            "Only applies on a FRESH checkpoint; otherwise the checkpoint wins. "
+            "Default 'earliest' because silently skipping a backlog is "
+            "unacceptable for an audit ledger. Use 'latest' only per "
+            "runbooks/checkpoint_corruption.md."
+        ),
     )
     args = parser.parse_args()
-
-    spark = build_spark()
-    try:
-        run_streaming(
-            spark,
-            starting_offsets=args.starting_offsets,
-            max_offsets_per_trigger=args.max_offsets,
-            use_schema_id_path=args.schema_id_path,
-        )
-    except KeyboardInterrupt:
-        print("\n[stream] Interrupted by user")
-    finally:
-        spark.stop()
+    run_stream(starting_offsets=args.starting_offsets)
 
 
 if __name__ == "__main__":
