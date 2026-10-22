@@ -1,0 +1,47 @@
+name: Schema Compatibility CI
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  schema-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Start Ephemeral Schema Registry
+        run: |
+          docker run -d --name registry -p 8081:8081 \
+            -e SCHEMA_REGISTRY_KAFKASTORE_CONNECTION_URL= \
+            -e SCHEMA_REGISTRY_HOST_NAME=localhost \
+            confluentinc/cp-schema-registry:7.3.0
+          
+          # Fail-closed registry wait
+          timeout 30 bash -c 'while [[ "$(curl -s -o /dev/null -w ''%{http_code}'' localhost:8081)" != "200" ]]; do sleep 2; done' || exit 1
+
+      - name: Register V2 Baseline
+        run: |
+          if [ ! -f schemas/transactions_v2.avsc ]; then exit 1; fi
+          PAYLOAD=$(jq -Rs '{schema: .}' schemas/transactions_v2.avsc)
+          curl -X POST -H "Content-Type: application/vnd.schemaregistry.v1+json" \
+            --data "$PAYLOAD" \
+            http://localhost:8081/subjects/payments.public.transactions-value/versions
+
+      - name: Test Proposed Schema
+        run: |
+          if [ ! -f schemas/transactions_proposed.avsc ]; then
+            echo "No proposed schema found. Skipping check."
+            exit 0
+          fi
+          PAYLOAD=$(jq -Rs '{schema: .}' schemas/transactions_proposed.avsc)
+          HTTP_STATUS=$(curl -s -o /tmp/response.json -w "%{http_code}" -X POST -H "Content-Type: application/vnd.schemaregistry.v1+json" --data "$PAYLOAD" http://localhost:8081/compatibility/subjects/payments.public.transactions-value/versions/latest)
+          
+          cat /tmp/response.json
+          IS_COMPATIBLE=$(jq '.is_compatible' /tmp/response.json)
+          
+          if [ "$IS_COMPATIBLE" != "true" ]; then
+            echo "SCHEMA BREAKING CHANGE DETECTED!"
+            exit 1
+          fi
+          echo "Schema is fully compatible."
