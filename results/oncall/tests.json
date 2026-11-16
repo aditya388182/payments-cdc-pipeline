@@ -1,0 +1,55 @@
+{
+  "commit": "320ed1e",
+  "dirty": true,
+  "generated_at_utc": "2026-11-16T08:42:34Z",
+  "command": "python oncall/tools/make_tests_json.py",
+  "suites": {
+    "pytest_existing_pipeline": {
+      "command": "python -m pytest spark/tests",
+      "tests": 23,
+      "passed": 23,
+      "failed": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    "pytest_new_oncall": {
+      "command": "python -m pytest oncall/replay/tests",
+      "tests": 46,
+      "passed": 46,
+      "failed": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    "go_race": {
+      "command": "cd oncall/api && go test -race -count=1 ./...",
+      "tests": 121,
+      "passed": 121,
+      "failed": 0,
+      "skipped": 0,
+      "packages": 11,
+      "packages_failed": 0,
+      "exit_code": 0,
+      "race_detector": true,
+      "postgres_integration": true
+    },
+    "jest": {
+      "command": "cd oncall/mobile && npx jest --ci",
+      "tests": 60,
+      "passed": 60,
+      "failed": 0,
+      "skipped": 0,
+      "suites": 6,
+      "exit_code": 0
+    },
+    "playwright": {
+      "command": "make oncall-e2e (Playwright on the Expo web build)",
+      "tests": 7,
+      "passed": 7,
+      "failed": 0,
+      "from_commit": "320ed1e",
+      "generated_at_utc": "2026-11-16T08:38:06Z"
+    }
+  },
+  "total_tests": 257,
+  "total_failed": 0
+}

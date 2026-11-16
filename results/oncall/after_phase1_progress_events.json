@@ -1,0 +1,73 @@
+{
+  "commit": "5f1f065",
+  "dirty": true,
+  "generated_at_utc": "2026-11-16T06:34:58Z",
+  "command": "python oncall/tools/collect_baseline.py --out after_phase1_progress_events.json",
+  "stack": "existing pipeline, SeaweedFS in place of MinIO (re-run after a pipeline-side change)",
+  "checks": {
+    "pytest": {
+      "command": "python -m pytest spark/tests/ -v",
+      "exit_code": 0,
+      "seconds": 22.3,
+      "result_lines": [
+        "spark/tests/test_dedup.py::test_in_order_keeps_highest_lsn PASSED        [  4%]",
+        "spark/tests/test_dedup.py::test_out_of_order_still_keeps_highest_lsn PASSED [  8%]",
+        "spark/tests/test_dedup.py::test_duplicate_lsn_is_deterministic_one_survivor PASSED [ 13%]",
+        "spark/tests/test_dedup.py::test_independent_keys_do_not_collapse_together PASSED [ 17%]",
+        "spark/tests/test_dedup.py::test_delete_before_update_trio_lands_on_delete PASSED [ 21%]",
+        "spark/tests/test_dedup.py::test_empty_batch PASSED                       [ 26%]",
+        "spark/tests/test_validator.py::test_negative_amount PASSED               [ 30%]",
+        "spark/tests/test_validator.py::test_zero_amount_passes PASSED            [ 34%]",
+        "spark/tests/test_validator.py::test_invalid_currency PASSED              [ 39%]",
+        "spark/tests/test_validator.py::test_valid_currency_passes PASSED         [ 43%]",
+        "spark/tests/test_validator.py::test_invalid_uuid PASSED                  [ 47%]",
+        "spark/tests/test_validator.py::test_null_uuid_rejected PASSED            [ 52%]",
+        "spark/tests/test_validator.py::test_unknown_merchant PASSED              [ 56%]",
+        "spark/tests/test_validator.py::test_all_rules_pass PASSED                [ 60%]",
+        "spark/tests/test_validator.py::test_empty_merchant_set_raises PASSED     [ 65%]",
+        "spark/tests/test_validator.py::test_null_is_delete_treated_as_not_deleted PASSED [ 69%]",
+        "spark/tests/test_validator.py::test_mixed_batch PASSED                   [ 73%]",
+        "spark/tests/test_validator.py::test_delete_exempt_from_amount_and_currency PASSED [ 78%]",
+        "spark/tests/test_validator.py::test_valid_delete_passes PASSED           [ 82%]",
+        "spark/tests/test_validator.py::test_delete_still_rejects_bad_uuid PASSED [ 86%]",
+        "spark/tests/test_validator.py::test_delete_exempt_from_unknown_merchant PASSED [ 91%]",
+        "spark/tests/test_validator.py::test_multiple_failures_collected PASSED   [ 95%]",
+        "spark/tests/test_validator.py::test_output_schemas PASSED                [100%]",
+        "============================= 23 passed in 21.77s =============================="
+      ],
+      "passed": 23
+    },
+    "parity_checker": {
+      "command": "python scripts/parity_checker.py",
+      "exit_code": 0,
+      "seconds": 27.0,
+      "result_lines": [
+        "[parity] Postgres rows                    = 4249",
+        "[parity] Delta live rows                  = 4249",
+        "[parity] missing_in_delta_total           = 0",
+        "[parity] unaccounted (not in DLQ either)  = 0",
+        "[parity] quarantined                      = 0",
+        "[parity] extra_in_delta                   = 0",
+        "[parity] value_mismatch                   = 0",
+        "[parity] duplicate_keys_in_delta          = 0",
+        "PARITY: PASS"
+      ]
+    },
+    "replay_offsets_both": {
+      "command": "python scripts/chaos/replay_offsets.py --mode both",
+      "exit_code": 0,
+      "seconds": 44.6,
+      "result_lines": [
+        "=== LSN-GUARD REPLAY TEST (commit=False, batch_id=999_999_999) ===",
+        "Kafka records read: 6981",
+        "BEFORE \u2192 rows=4,249  sum(amount_minor)=328,955,681",
+        "2026-11-16 06:34:52,903 [INFO] payments.cdc \u2013 commit=False \u2192 skipping ledger write for batch_id=999999999",
+        "AFTER  \u2192 rows=4,249  sum(amount_minor)=328,955,681",
+        "REPLAY TEST: table unchanged  (LSN guard held, ledger not poisoned)",
+        "=== LEDGER-SKIP TEST (batch_id=1) ===",
+        "LEDGER SKIP TEST: batch 1 correctly ignored",
+        "All Day-3 replay proofs passed"
+      ]
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "commit": "320ed1e",
+  "dirty": true,
+  "generated_at_utc": "2026-11-16T08:42:48Z",
+  "command": "python oncall/tools/proto_gate.py",
+  "buf_version": "1.75.0",
+  "lint": {
+    "exit_code": 0,
+    "output": "clean"
+  },
+  "breaking_against_first_proto_commit": {
+    "against_commit": "49c0161",
+    "exit_code": 0,
+    "output": "no breaking changes"
+  },
+  "breaking_against_deliberately_broken_copy": {
+    "exit_code": 100,
+    "detected": true,
+    "output": [
+      "/tmp/proto-gate-w1xf6tpe/p/oncall/v1/replay.proto:36:1:Previously present field \"2\" with name \"requested_by\" on message \"ReplayRequest\" was deleted.",
+      "/tmp/proto-gate-w1xf6tpe/p/oncall/v1/replay.proto:37:3:Field \"1\" with name \"dlq_id\" on message \"ReplayRequest\" changed type from \"string\" to \"int32\"."
+    ]
+  },
+  "passed": true
+}

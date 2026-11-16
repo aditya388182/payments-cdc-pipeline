@@ -1,0 +1,35 @@
+{
+  "variant": "slow_clients",
+  "target_clients": 1000,
+  "ramp": "60s",
+  "hold": "5m",
+  "connected": 1000,
+  "connect_failed": 0,
+  "unexpected_close": 0,
+  "snapshots_received": 165841,
+  "alerts_received": 0,
+  "seq_violations": 0,
+  "delivery_ms": {
+    "count": 164841,
+    "min": 0,
+    "p50": 23,
+    "p90": 39,
+    "p95": 44,
+    "p99": 78,
+    "max": 129
+  },
+  "snapshots_per_client": {
+    "min": 151,
+    "p50": 166,
+    "max": 181,
+    "clients": 1000
+  },
+  "received_over_expected": {
+    "min": 1,
+    "p50": 1,
+    "p90": 1.00625,
+    "max": 1.0066225165562914
+  },
+  "expected_snapshots_per_client_if_connected_for_ramp_plus_hold": 181,
+  "iterations": 1000
+}

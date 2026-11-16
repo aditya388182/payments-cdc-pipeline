@@ -1,0 +1,12 @@
+# Superset of the repo's req.txt (pipeline) plus what replay-svc needs. Lock: requirements.lock
+-r ../../req.txt
+confluent-kafka[avro,schemaregistry]
+authlib
+grpcio
+grpcio-tools
+grpcio-health-checking
+protobuf
+deltalake
+pyarrow
+pytest
+pillow

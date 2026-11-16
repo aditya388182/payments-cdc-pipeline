@@ -1,0 +1,48 @@
+== A. admin signs in (happy path)
+  app: code_verifier=ZevZU4TrJM24Fs…  code_challenge=D_mlJ6DbVo1XRb… (S256)
+  GET /v1/auth/github/start -> 302 http://127.0.0.1:8099/login/oauth/authorize?client_id=…&redirect_uri=…/v1/auth/github/callback&state=…&scope=read:user
+  user signs in as 'admin-user' at GitHub -> 302 http://127.0.0.1:8088/v1/auth/github/callback?code=…&state=…
+  callback exchanges the GitHub code server-side, checks the allowlist -> 302 oncall://auth/callback?code=…
+  POST /v1/auth/token {code, code_verifier} -> HTTP 200  user={"login": "admin-user", "role": "admin"} expires_in=899
+  access_token=eyJhbGciOiJIUz… refresh_token=hruBGYZm4BiIjS…
+  GET /v1/me           -> {"login":"admin-user","role":"admin"}
+ HTTP 200
+  GET /v1/audit (admin) -> HTTP 200
+  same one-time code again -> HTTP 400 (single use)
+== B. refresh-token rotation and reuse detection
+  POST /v1/auth/token {refresh_token: R1} -> HTTP 200, new refresh token R2=NwF1lvb6aCcgDO… (R1 != R2: yes)
+  presenting the OLD R1 again -> HTTP 401 {"code": "invalid_grant", "message": "refresh token was already used; the session has been revoked, sign in again"}
+  then the NEWEST R2 -> HTTP 401 (the whole family was revoked by the reuse)
+== C. PKCE mismatch
+  app: code_verifier=9sFToWCCtqsN3d…  code_challenge=tF59qES99TF98S… (S256)
+  GET /v1/auth/github/start -> 302 http://127.0.0.1:8099/login/oauth/authorize?client_id=…&redirect_uri=…/v1/auth/github/callback&state=…&scope=read:user
+  user signs in as 'admin-user' at GitHub -> 302 http://127.0.0.1:8088/v1/auth/github/callback?code=…&state=…
+  callback exchanges the GitHub code server-side, checks the allowlist -> 302 oncall://auth/callback?code=…
+  wrong code_verifier -> HTTP 400 {"code": "invalid_grant", "message": "code_verifier does not match"}
+  right verifier afterwards -> HTTP 400 (the failed attempt burned the code)
+== D. state mismatch (CSRF): a forged callback
+  GET /v1/auth/github/callback?code=x&state=forged -> HTTP 400 location=
+== E. viewer vs admin
+  app: code_verifier=NH0kQVOSGHbV5M…  code_challenge=IEOGtmFVsMCfvV… (S256)
+  GET /v1/auth/github/start -> 302 http://127.0.0.1:8099/login/oauth/authorize?client_id=…&redirect_uri=…/v1/auth/github/callback&state=…&scope=read:user
+  user signs in as 'viewer-user' at GitHub -> 302 http://127.0.0.1:8088/v1/auth/github/callback?code=…&state=…
+  callback exchanges the GitHub code server-side, checks the allowlist -> 302 oncall://auth/callback?code=…
+  user={"login": "viewer-user", "role": "viewer"}
+  viewer GET /v1/snapshot -> HTTP 200
+  viewer GET /v1/audit    -> {"error":{"code":"forbidden","message":"admin role required"}}
+ HTTP 403
+  no token GET /v1/audit  -> {"error":{"code":"unauthorized","message":"missing access token"}}
+ HTTP 401
+== F. a GitHub user that is not on the allowlist
+  app: code_verifier=ZbYU6kvJNKRk6n…  code_challenge=iTfG6aeZZ7b4iQ… (S256)
+  GET /v1/auth/github/start -> 302 http://127.0.0.1:8099/login/oauth/authorize?client_id=…&redirect_uri=…/v1/auth/github/callback&state=…&scope=read:user
+  user signs in as 'outsider' at GitHub -> 302 http://127.0.0.1:8088/v1/auth/github/callback?code=…&state=…
+  callback exchanges the GitHub code server-side, checks the allowlist -> 302 oncall://auth/callback?error=not_allowed
+  (no code was issued)
+== G. logout revokes the refresh family
+  app: code_verifier=9p7DPEgLrt9Oac…  code_challenge=KjGboarbDzBeHG… (S256)
+  GET /v1/auth/github/start -> 302 http://127.0.0.1:8099/login/oauth/authorize?client_id=…&redirect_uri=…/v1/auth/github/callback&state=…&scope=read:user
+  user signs in as 'admin-user' at GitHub -> 302 http://127.0.0.1:8088/v1/auth/github/callback?code=…&state=…
+  callback exchanges the GitHub code server-side, checks the allowlist -> 302 oncall://auth/callback?code=…
+  POST /v1/auth/logout -> HTTP 204
+  refresh after logout -> HTTP 401

@@ -1,0 +1,73 @@
+{
+  "commit": "320ed1e",
+  "dirty": true,
+  "generated_at_utc": "2026-11-16T08:38:06Z",
+  "command": "make oncall-e2e",
+  "tests": 7,
+  "passed": 7,
+  "failed": 0,
+  "per_test": [
+    {
+      "title": "login screen, GitHub sign-in as an admin, live screen with charts",
+      "status": "passed",
+      "duration_ms": 27567
+    },
+    {
+      "title": "a lag alert fires, shows up on the Alerts screen and can be acknowledged",
+      "status": "passed",
+      "duration_ms": 3038
+    },
+    {
+      "title": "stop the load, then the DLQ list shows the dead-lettered record and its detail",
+      "status": "passed",
+      "duration_ms": 44978
+    },
+    {
+      "title": "a viewer sees no Replay button and no Audit tab, and the API refuses the replay with 403",
+      "status": "passed",
+      "duration_ms": 4409
+    },
+    {
+      "title": "admin replays the record: confirm, APPLIED, it leaves the queue, an audit row appears, a second replay is ALREADY_APPLIED",
+      "status": "passed",
+      "duration_ms": 133646
+    },
+    {
+      "title": "after the drain the live screen is back in sync; settings shows the user and role; sign out returns to login",
+      "status": "passed",
+      "duration_ms": 7507
+    },
+    {
+      "title": "a GitHub account that is not allow-listed is refused with a clear message",
+      "status": "passed",
+      "duration_ms": 2171
+    }
+  ],
+  "screenshots": [
+    "01-login.png",
+    "02-mock-github.png",
+    "03-live.png",
+    "04-alerts-firing.png",
+    "05-alerts-acknowledged.png",
+    "06-dlq-list.png",
+    "07-dlq-detail.png",
+    "08-viewer-no-replay.png",
+    "09-replay-confirm.png",
+    "10-replay-applied.png",
+    "11-dlq-after-replay.png",
+    "12-audit.png",
+    "13-replay-already-applied.png",
+    "14-alerts-after.png",
+    "15-settings.png",
+    "16-not-allowed.png",
+    "17-live-in-sync.png"
+  ],
+  "stats": {
+    "startTime": "2026-11-16T08:34:21.890Z",
+    "duration": 224408.912,
+    "expected": 7,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

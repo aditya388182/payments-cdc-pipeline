@@ -1,0 +1,118 @@
+syntax = "proto3";
+
+package oncall.v1;
+
+option go_package = "github.com/aditya388182/payments-cdc-pipeline/oncall/api/gen/oncall/v1;oncallv1";
+
+// ReplayService is served by the Python replay-svc. It wraps the pipeline's existing validator and
+// producer: the Go console never writes to Kafka or Delta itself.
+service ReplayService {
+  // Replay re-runs the validator on one dead-lettered record and, if it now passes, re-publishes it
+  // to the normal CDC topic. The Delta MERGE's LSN guard makes a repeat a no-op.
+  rpc Replay(ReplayRequest) returns (ReplayResponse);
+  // ListDlq pages through records that are still open (not yet applied to the lake).
+  rpc ListDlq(ListDlqRequest) returns (ListDlqResponse);
+  rpc GetDlq(GetDlqRequest) returns (GetDlqResponse);
+  // DlqStats returns the DLQ topic size and open-record counts (cheap: cached per DLQ end offset and lake version).
+  rpc DlqStats(DlqStatsRequest) returns (DlqStatsResponse);
+  // LakeStats reads the Delta table (live row count, max LSN, last commit time).
+  rpc LakeStats(LakeStatsRequest) returns (LakeStatsResponse);
+}
+
+enum ReplayStatus {
+  REPLAY_STATUS_UNSPECIFIED = 0;
+  // The record passed validation, was re-published, and the lake now holds it.
+  REPLAY_STATUS_APPLIED = 1;
+  // The lake already holds this key at an LSN >= the record's LSN; nothing was published.
+  REPLAY_STATUS_ALREADY_APPLIED = 2;
+  // The validator still rejects the record; detail carries the validator's reason(s).
+  REPLAY_STATUS_STILL_INVALID = 3;
+  REPLAY_STATUS_NOT_FOUND = 4;
+  // Published, but not visible in the lake within the wait window (stream behind, or the
+  // pipeline's own merchant cache was stale and it re-quarantined the record).
+  REPLAY_STATUS_PENDING = 5;
+}
+
+message ReplayRequest {
+  string dlq_id = 1;
+  string requested_by = 2;
+  string idempotency_key = 3;
+}
+
+message ReplayResponse {
+  ReplayStatus status = 1;
+  string detail = 2;
+  // LSN of the key in the lake after the call (0 if absent).
+  int64 lake_lsn = 3;
+}
+
+message DlqRecord {
+  // Offset of the record in the DLQ topic (single partition), as a string.
+  string id = 1;
+  string transaction_id = 2;
+  string merchant_id = 3;
+  int64 amount_minor = 4;
+  string currency = 5;
+  string status = 6;
+  string event_type = 7;
+  string op = 8;
+  int64 lsn = 9;
+  string rejection_reason = 10;
+  string rejected_at = 11;
+  // The original DLQ message value (JSON), verbatim.
+  string payload_json = 12;
+  // True when the lake already holds this key at an LSN >= the record's LSN.
+  bool applied = 13;
+}
+
+message ListDlqRequest {
+  // Offset to start from; empty means the beginning of the topic.
+  string cursor = 1;
+  int32 limit = 2;
+  // Substring filter on rejection_reason (e.g. UNKNOWN_MERCHANT); empty means all.
+  string reason = 3;
+  // Include records already applied to the lake (default false: open records only).
+  bool include_applied = 4;
+}
+
+message ListDlqResponse {
+  repeated DlqRecord records = 1;
+  // Empty when the end of the topic was reached.
+  string next_cursor = 2;
+  // Number of messages in the DLQ topic (end offset minus start offset).
+  int64 topic_messages = 3;
+  // Number of DLQ records still open (not applied to the lake), after in-topic duplicates are collapsed.
+  int64 open_total = 4;
+  // Distinct keys among the open records that are absent from the lake (rows Postgres has and the lake lacks
+  // because the validator quarantined them); the parity badge subtracts these.
+  int64 open_missing_keys = 5;
+}
+
+message GetDlqRequest {
+  string id = 1;
+}
+
+message GetDlqResponse {
+  bool found = 1;
+  DlqRecord record = 2;
+}
+
+message LakeStatsRequest {}
+
+message LakeStatsResponse {
+  // Live rows (is_delete = false).
+  int64 row_count = 1;
+  int64 tombstone_count = 2;
+  int64 max_lsn = 3;
+  // RFC 3339 time of the latest commit to the Delta log.
+  string last_commit_ts = 4;
+  int64 delta_version = 5;
+}
+
+message DlqStatsRequest {}
+
+message DlqStatsResponse {
+  int64 topic_messages = 1;
+  int64 open_total = 2;
+  int64 open_missing_keys = 3;
+}

@@ -1,0 +1,161 @@
+name: On-call console CI
+
+# Every job fits a standard GitHub-hosted runner (no Kafka, Spark streaming, browsers or k6 here).
+# The full-stack end-to-end run and the 1,000-client load test stay local: `make oncall-e2e`, `make ws-load`
+# (their results are committed under results/oncall/ and docs/oncall/screenshots/). See docs/oncall/DECISIONS.md.
+
+on:
+  pull_request:
+  push:
+    branches: [main, feat/oncall-console]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oncall-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go (fmt, vet, staticcheck, race tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: oncall
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: oncall
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U oncall" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      ONCALL_TEST_PG_DSN: postgres://oncall:ci-only-password@127.0.0.1:5432/oncall?sslmode=disable
+    defaults:
+      run:
+        working-directory: oncall/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: oncall/api/go.mod
+          cache-dependency-path: oncall/api/go.sum
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: go vet
+        run: go vet ./...
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+      - name: go test -race
+        run: go test -race -count=1 ./...
+
+  replay:
+    name: replay-svc (pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: oncall/replay/requirements.lock
+      - run: pip install -r oncall/replay/requirements.lock
+      - name: pytest (in-process gRPC server, fakes for lake / DLQ / validator / publisher)
+        run: python -m pytest -q oncall/replay/tests
+        env:
+          PYTHONPATH: .
+
+  pipeline:
+    name: Existing pipeline tests (pytest spark/tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: pip install -r req.lock.txt
+      - name: pytest spark/tests (23 tests)
+        run: python -m pytest spark/tests -q
+        env:
+          PYTHONPATH: .
+          PYSPARK_PYTHON: python
+          PYSPARK_DRIVER_PYTHON: python
+
+  proto:
+    name: Protos (buf lint + breaking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: "1.75.0"
+          github_token: ${{ github.token }}
+      - name: buf lint
+        run: buf lint
+        working-directory: oncall/proto
+      - name: buf breaking against main
+        working-directory: oncall/proto
+        run: |
+          git fetch --no-tags origin main
+          if git cat-file -e origin/main:oncall/proto/buf.yaml 2>/dev/null; then
+            buf breaking --against "../../.git#branch=origin/main,subdir=oncall/proto"
+          else
+            echo "main has no oncall/proto yet: nothing to compare against (first introduction of the protos)"
+          fi
+      - name: generated code is up to date
+        run: |
+          pip install -q grpcio-tools==1.85.1
+          mkdir -p /tmp/pb
+          python -m grpc_tools.protoc -I oncall/proto --python_out=/tmp/pb --grpc_python_out=/tmp/pb oncall/v1/replay.proto
+          diff -q /tmp/pb/oncall/v1/replay_pb2.py oncall/replay/gen/oncall/v1/replay_pb2.py
+          diff -q /tmp/pb/oncall/v1/replay_pb2_grpc.py oncall/replay/gen/oncall/v1/replay_pb2_grpc.py
+
+  schema-gate:
+    name: Avro schema compatibility gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: pip install avro==1.12.2
+      - name: fixtures (a breaking change must fail, a compatible one must pass)
+        run: python scripts/check_schema_compat.py --self-test
+      - name: proposed schema vs the registered baseline (fails closed; no proposed file means nothing to check)
+        run: |
+          if [ -f schemas/transactions_proposed.avsc ]; then
+            python scripts/check_schema_compat.py --baseline schemas/transactions_v2.avsc --proposed schemas/transactions_proposed.avsc
+          else
+            echo "no schemas/transactions_proposed.avsc in this change"
+          fi
+
+  mobile:
+    name: Mobile (tsc, eslint, Jest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: oncall/mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: oncall/mobile/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npx tsc --noEmit
+      - run: npx eslint . --max-warnings=0
+      - run: npx jest --ci

@@ -1,0 +1,29 @@
+{
+  "fixtures": [
+    {
+      "file": "compatible_add_optional_field.avsc",
+      "expect": "compatible",
+      "why": "a new nullable field WITH a default (what PR #4 added: `channel`). Old messages simply lack it and the reader fills the default."
+    },
+    {
+      "file": "compatible_remove_field.avsc",
+      "expect": "compatible",
+      "why": "a removed field is NOT breaking under BACKWARD (the reader ignores the extra data in old messages); it would be breaking under FORWARD."
+    },
+    {
+      "file": "breaking_rename_field.avsc",
+      "expect": "breaking",
+      "why": "`currency` renamed to `ccy` (PR #5, the red run): a new field without a default that old messages do not have."
+    },
+    {
+      "file": "breaking_type_change.avsc",
+      "expect": "breaking",
+      "why": "`amount_minor` changed from long to string: old long values cannot be read as string."
+    },
+    {
+      "file": "breaking_add_required_field.avsc",
+      "expect": "breaking",
+      "why": "a new field WITHOUT a default: old messages have no value for it."
+    }
+  ]
+}

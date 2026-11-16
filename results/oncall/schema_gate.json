@@ -1,0 +1,105 @@
+{
+  "commit": "320ed1e",
+  "dirty": true,
+  "generated_at_utc": "2026-11-16T08:42:39Z",
+  "command": "python scripts/check_schema_compat.py --self-test --json results/oncall/schema_gate.json",
+  "compatibility_level": "BACKWARD",
+  "engines": [
+    "local (apache avro)",
+    "schema registry /compatibility"
+  ],
+  "breaking_fixtures_rejected": 3,
+  "breaking_fixtures_total": 3,
+  "compatible_fixtures_accepted": 3,
+  "compatible_fixtures_total": 3,
+  "all_as_expected": true,
+  "fixtures": [
+    {
+      "fixture": "transactions_v2.avsc",
+      "expect": "compatible",
+      "why": "the baseline against itself",
+      "local_verdict": "compatible",
+      "local_messages": [],
+      "registry_verdict": "compatible",
+      "registry_messages": [],
+      "passed": true
+    },
+    {
+      "fixture": "compatible_add_optional_field.avsc",
+      "expect": "compatible",
+      "why": "a new nullable field WITH a default (what PR #4 added: `channel`). Old messages simply lack it and the reader fills the default.",
+      "local_verdict": "compatible",
+      "local_messages": [],
+      "registry_verdict": "compatible",
+      "registry_messages": [],
+      "passed": true
+    },
+    {
+      "fixture": "compatible_remove_field.avsc",
+      "expect": "compatible",
+      "why": "a removed field is NOT breaking under BACKWARD (the reader ignores the extra data in old messages); it would be breaking under FORWARD.",
+      "local_verdict": "compatible",
+      "local_messages": [],
+      "registry_verdict": "compatible",
+      "registry_messages": [],
+      "passed": true
+    },
+    {
+      "fixture": "breaking_rename_field.avsc",
+      "expect": "breaking",
+      "why": "`currency` renamed to `ccy` (PR #5, the red run): a new field without a default that old messages do not have.",
+      "local_verdict": "breaking",
+      "local_messages": [
+        "Value.ccy: field added WITHOUT a default; messages written before the change have no value for it (together with the removal of 'currency' this looks like a rename 'currency' -> 'ccy')",
+        "reader union lacking writer type: RECORD (at /fields/0/type/1)"
+      ],
+      "registry_verdict": "breaking",
+      "registry_messages": [
+        "{errorType:'MISSING_UNION_BRANCH', description:'The new schema is missing a type inside a union field at path '/fields/0/type/1' in the old schema', additionalInfo:'reader union lacking writer type: RECORD'}",
+        "{errorType:'MISSING_UNION_BRANCH', description:'The new schema is missing a type inside a union field at path '/fields/1/type/1' in the old schema', additionalInfo:'reader union lacking writer type: RECORD'}",
+        "{oldSchemaVersion: 1}",
+        "{oldSchema: '{\"type\":\"record\",\"name\":\"Envelope\",\"namespace\":\"payments.public.transactions\",\"fields\":[{\"name\":\"before\",\"type\":[\"null\",{\"type\":\"record\",\"name\":\"Value\",\"fields\":[{\"name\":\"transaction_id\",\"type\":{\"type\":\"string\",\"connect.version\":1,\"connect.name\":\"io.debezium.data.Uuid\"}},{\"name\":\"merchant_id\",\"type\":\"string\"},{\"name\":\"amount_minor\",\"type\":\"long\"},{\"name\":\"currency\",\"type\":\"string\"},{\"name\":\"status\",\"type\":\"string\"},{\"name\":\"event_type\",\"type\":\"string\"},{\"name\":\"created_at\",\"type\":{\"type\":\"string\",\"connect.version\":1,\"connect.default\":\"1970-01-01T00:00:00.000000Z\",\"connect.name\":\"io.debezium.time.ZonedTimestamp\"},\"default\":\"1970-01-01T00:00:00.000000Z\"},{\"name\":\"updated_at\",\"type\":{\"type\":\"string\",\"connect.version\":1,\"connect.default\":\"1970-01-01T00:00:00.000000Z\",\"connect.name\":\"io.debezium.time.ZonedTimestamp\"},\"default\":\"1970-01-01T00:00:00.000000Z\"}],\"connect.name\":\"payments.public.transactions.Value\"}],\"default\":null},{\"name\":\"after\",\"type\":[\"null\",\"Value\"],\"default\":null},{\"name\":\"source\",\"type\":{\"type\":\"record\",\"name\":\"Source\",\"namespace\":\"io.debezium.connector.postgresql\",\"fields\":[{\"name\":\"version\",\"type\":\"string\"},{\"name\":\"connector\",\"type\":\"string\"},{\"name\":\"name\",\"type\":\"string\"},{\"name\":\"ts_ms\",\"type\":\"long\"},{\"name\":\"snapshot\",\"type\":[{\"type\":\"string\",\"connect.version\":1,\"connect.parameters\":{\"allowed\":\"true,last,false,incremental\"},\"connect.default\":\"false\",\"connect.name\":\"io.debezium.data.Enum\"},\"null\"],\"default\":\"false\"},{\"name\":\"db\",\"type\":\"string\"},{\"name\":\"sequence\",\"type\":[\"null\",\"string\"],\"default\":null},{\"name\":\"schema\",\"type\":\"string\"},{\"name\":\"table\",\"type\":\"string\"},{\"name\":\"txId\",\"type\":[\"null\",\"long\"],\"default\":null},{\"name\":\"lsn\",\"type\":[\"null\",\"long\"],\"default\":null},{\"name\":\"xmin\",\"type\":[\"null\",\"long\"],\"default\":null}],\"connect.name\":\"io.debezium.connector.postgresql.Source\"}},{\"name\":\"op\",\"type\":\"string\"},{\"name\":\"ts_ms\",\"type\":[\"null\",\"long\"],\"default\":null},{\"name\":\"transaction\",\"type\":[\"null\",{\"type\":\"record\",\"name\":\"block\",\"namespace\":\"event\",\"fields\":[{\"name\":\"id\",\"type\":\"string\"},{\"name\":\"total_order\",\"type\":\"long\"},{\"name\":\"data_collection_order\",\"type\":\"long\"}],\"connect.version\":1,\"connect.name\":\"event.block\"}],\"default\":null}],\"connect.version\":1,\"connect.name\":\"payments.public.transactions.Envelope\"}'}",
+        "{validateFields: 'false', compatibility: 'BACKWARD'}"
+      ],
+      "passed": true
+    },
+    {
+      "fixture": "breaking_type_change.avsc",
+      "expect": "breaking",
+      "why": "`amount_minor` changed from long to string: old long values cannot be read as string.",
+      "local_verdict": "breaking",
+      "local_messages": [
+        "Value.amount_minor: type changed from long to string and the new type cannot read the old one",
+        "reader union lacking writer type: RECORD (at /fields/0/type/1)"
+      ],
+      "registry_verdict": "breaking",
+      "registry_messages": [
+        "{errorType:'MISSING_UNION_BRANCH', description:'The new schema is missing a type inside a union field at path '/fields/0/type/1' in the old schema', additionalInfo:'reader union lacking writer type: RECORD'}",
+        "{errorType:'MISSING_UNION_BRANCH', description:'The new schema is missing a type inside a union field at path '/fields/1/type/1' in the old schema', additionalInfo:'reader union lacking writer type: RECORD'}",
+        "{oldSchemaVersion: 1}",
+        "{oldSchema: '{\"type\":\"record\",\"name\":\"Envelope\",\"namespace\":\"payments.public.transactions\",\"fields\":[{\"name\":\"before\",\"type\":[\"null\",{\"type\":\"record\",\"name\":\"Value\",\"fields\":[{\"name\":\"transaction_id\",\"type\":{\"type\":\"string\",\"connect.version\":1,\"connect.name\":\"io.debezium.data.Uuid\"}},{\"name\":\"merchant_id\",\"type\":\"string\"},{\"name\":\"amount_minor\",\"type\":\"long\"},{\"name\":\"currency\",\"type\":\"string\"},{\"name\":\"status\",\"type\":\"string\"},{\"name\":\"event_type\",\"type\":\"string\"},{\"name\":\"created_at\",\"type\":{\"type\":\"string\",\"connect.version\":1,\"connect.default\":\"1970-01-01T00:00:00.000000Z\",\"connect.name\":\"io.debezium.time.ZonedTimestamp\"},\"default\":\"1970-01-01T00:00:00.000000Z\"},{\"name\":\"updated_at\",\"type\":{\"type\":\"string\",\"connect.version\":1,\"connect.default\":\"1970-01-01T00:00:00.000000Z\",\"connect.name\":\"io.debezium.time.ZonedTimestamp\"},\"default\":\"1970-01-01T00:00:00.000000Z\"}],\"connect.name\":\"payments.public.transactions.Value\"}],\"default\":null},{\"name\":\"after\",\"type\":[\"null\",\"Value\"],\"default\":null},{\"name\":\"source\",\"type\":{\"type\":\"record\",\"name\":\"Source\",\"namespace\":\"io.debezium.connector.postgresql\",\"fields\":[{\"name\":\"version\",\"type\":\"string\"},{\"name\":\"connector\",\"type\":\"string\"},{\"name\":\"name\",\"type\":\"string\"},{\"name\":\"ts_ms\",\"type\":\"long\"},{\"name\":\"snapshot\",\"type\":[{\"type\":\"string\",\"connect.version\":1,\"connect.parameters\":{\"allowed\":\"true,last,false,incremental\"},\"connect.default\":\"false\",\"connect.name\":\"io.debezium.data.Enum\"},\"null\"],\"default\":\"false\"},{\"name\":\"db\",\"type\":\"string\"},{\"name\":\"sequence\",\"type\":[\"null\",\"string\"],\"default\":null},{\"name\":\"schema\",\"type\":\"string\"},{\"name\":\"table\",\"type\":\"string\"},{\"name\":\"txId\",\"type\":[\"null\",\"long\"],\"default\":null},{\"name\":\"lsn\",\"type\":[\"null\",\"long\"],\"default\":null},{\"name\":\"xmin\",\"type\":[\"null\",\"long\"],\"default\":null}],\"connect.name\":\"io.debezium.connector.postgresql.Source\"}},{\"name\":\"op\",\"type\":\"string\"},{\"name\":\"ts_ms\",\"type\":[\"null\",\"long\"],\"default\":null},{\"name\":\"transaction\",\"type\":[\"null\",{\"type\":\"record\",\"name\":\"block\",\"namespace\":\"event\",\"fields\":[{\"name\":\"id\",\"type\":\"string\"},{\"name\":\"total_order\",\"type\":\"long\"},{\"name\":\"data_collection_order\",\"type\":\"long\"}],\"connect.version\":1,\"connect.name\":\"event.block\"}],\"default\":null}],\"connect.version\":1,\"connect.name\":\"payments.public.transactions.Envelope\"}'}",
+        "{validateFields: 'false', compatibility: 'BACKWARD'}"
+      ],
+      "passed": true
+    },
+    {
+      "fixture": "breaking_add_required_field.avsc",
+      "expect": "breaking",
+      "why": "a new field WITHOUT a default: old messages have no value for it.",
+      "local_verdict": "breaking",
+      "local_messages": [
+        "Value.risk_level: field added WITHOUT a default; messages written before the change have no value for it",
+        "reader union lacking writer type: RECORD (at /fields/0/type/1)"
+      ],
+      "registry_verdict": "breaking",
+      "registry_messages": [
+        "{errorType:'MISSING_UNION_BRANCH', description:'The new schema is missing a type inside a union field at path '/fields/0/type/1' in the old schema', additionalInfo:'reader union lacking writer type: RECORD'}",
+        "{errorType:'MISSING_UNION_BRANCH', description:'The new schema is missing a type inside a union field at path '/fields/1/type/1' in the old schema', additionalInfo:'reader union lacking writer type: RECORD'}",
+        "{oldSchemaVersion: 1}",
+        "{oldSchema: '{\"type\":\"record\",\"name\":\"Envelope\",\"namespace\":\"payments.public.transactions\",\"fields\":[{\"name\":\"before\",\"type\":[\"null\",{\"type\":\"record\",\"name\":\"Value\",\"fields\":[{\"name\":\"transaction_id\",\"type\":{\"type\":\"string\",\"connect.version\":1,\"connect.name\":\"io.debezium.data.Uuid\"}},{\"name\":\"merchant_id\",\"type\":\"string\"},{\"name\":\"amount_minor\",\"type\":\"long\"},{\"name\":\"currency\",\"type\":\"string\"},{\"name\":\"status\",\"type\":\"string\"},{\"name\":\"event_type\",\"type\":\"string\"},{\"name\":\"created_at\",\"type\":{\"type\":\"string\",\"connect.version\":1,\"connect.default\":\"1970-01-01T00:00:00.000000Z\",\"connect.name\":\"io.debezium.time.ZonedTimestamp\"},\"default\":\"1970-01-01T00:00:00.000000Z\"},{\"name\":\"updated_at\",\"type\":{\"type\":\"string\",\"connect.version\":1,\"connect.default\":\"1970-01-01T00:00:00.000000Z\",\"connect.name\":\"io.debezium.time.ZonedTimestamp\"},\"default\":\"1970-01-01T00:00:00.000000Z\"}],\"connect.name\":\"payments.public.transactions.Value\"}],\"default\":null},{\"name\":\"after\",\"type\":[\"null\",\"Value\"],\"default\":null},{\"name\":\"source\",\"type\":{\"type\":\"record\",\"name\":\"Source\",\"namespace\":\"io.debezium.connector.postgresql\",\"fields\":[{\"name\":\"version\",\"type\":\"string\"},{\"name\":\"connector\",\"type\":\"string\"},{\"name\":\"name\",\"type\":\"string\"},{\"name\":\"ts_ms\",\"type\":\"long\"},{\"name\":\"snapshot\",\"type\":[{\"type\":\"string\",\"connect.version\":1,\"connect.parameters\":{\"allowed\":\"true,last,false,incremental\"},\"connect.default\":\"false\",\"connect.name\":\"io.debezium.data.Enum\"},\"null\"],\"default\":\"false\"},{\"name\":\"db\",\"type\":\"string\"},{\"name\":\"sequence\",\"type\":[\"null\",\"string\"],\"default\":null},{\"name\":\"schema\",\"type\":\"string\"},{\"name\":\"table\",\"type\":\"string\"},{\"name\":\"txId\",\"type\":[\"null\",\"long\"],\"default\":null},{\"name\":\"lsn\",\"type\":[\"null\",\"long\"],\"default\":null},{\"name\":\"xmin\",\"type\":[\"null\",\"long\"],\"default\":null}],\"connect.name\":\"io.debezium.connector.postgresql.Source\"}},{\"name\":\"op\",\"type\":\"string\"},{\"name\":\"ts_ms\",\"type\":[\"null\",\"long\"],\"default\":null},{\"name\":\"transaction\",\"type\":[\"null\",{\"type\":\"record\",\"name\":\"block\",\"namespace\":\"event\",\"fields\":[{\"name\":\"id\",\"type\":\"string\"},{\"name\":\"total_order\",\"type\":\"long\"},{\"name\":\"data_collection_order\",\"type\":\"long\"}],\"connect.version\":1,\"connect.name\":\"event.block\"}],\"default\":null}],\"connect.version\":1,\"connect.name\":\"payments.public.transactions.Envelope\"}'}",
+        "{validateFields: 'false', compatibility: 'BACKWARD'}"
+      ],
+      "passed": true
+    }
+  ]
+}
