@@ -1,4 +1,4 @@
-version: '3.8'
+
 
 services:
   postgres:
@@ -82,27 +82,23 @@ services:
         confluent-hub install --no-prompt debezium/debezium-connector-postgresql:2.5.4
         /etc/confluent/docker/run
 
+  # MinIO stopped publishing images (Docker Hub removed, quay.io needs auth), so the
+  # S3-compatible store is SeaweedFS. Service name, ports and credentials are kept so
+  # no pipeline endpoint/credential config changes. See docs/oncall/DECISIONS.md D-001.
   minio:
-    image: minio/minio:latest
+    image: chrislusf/seaweedfs:4.53
     container_name: minio
-    command: server /data --console-address ":9001"
+    command: mini -dir=/data -ip.bind=0.0.0.0 -s3.port=9000 -s3.config=/etc/seaweedfs/s3.json
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      S3_BUCKET: payments-lake
+    volumes:
+      - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
     ports:
-      - "9000:9000"
-      - "9001:9001"
-
-  minio-init:
-    image: minio/mc:latest
-    depends_on:
-      - minio
-    entrypoint: >
-      /bin/sh -c "
-      sleep 8;
-      mc alias set local http://minio:9000 minioadmin minioadmin;
-      mc mb -p local/payments-lake;
-      exit 0;"
+      - "127.0.0.1:9000:9000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -o /dev/null http://127.0.0.1:9000/"]
+      interval: 5s
+      retries: 20
   pushgateway:
     image: prom/pushgateway:v1.9.0
     container_name: pushgateway

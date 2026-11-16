@@ -1,0 +1,27 @@
+{
+  "commit": "76edd81",
+  "dirty": true,
+  "generated_at_utc": "2026-11-16T06:21:08Z",
+  "command": "python oncall/tools/audit_skew.py",
+  "naive": {
+    "stage_id": 8,
+    "tasks": 8,
+    "total_records": 6039,
+    "min": 229.0,
+    "median": 752.0,
+    "max": 1800.0,
+    "max_over_min": 7.86,
+    "max_over_median": 2.39
+  },
+  "salted": {
+    "stage_id": 16,
+    "tasks": 8,
+    "total_records": 6039,
+    "min": 503.0,
+    "median": 796.0,
+    "max": 1098.0,
+    "max_over_min": 2.18,
+    "max_over_median": 1.38
+  },
+  "reduction_pct": 72.3
+}

@@ -5,10 +5,10 @@ set -euo pipefail
 LOG_FILE="documents/chaos_log.txt"
 mkdir -p documents
 
-PID=$(pgrep -f "payments_cdc_job.py" | head -1 || true)
+PID=$(pgrep -f "python.*payments_cdc_job" | head -1 || true)
 
 if [ -z "${PID}" ]; then
-  echo "ERROR: no spark job (payments_cdc_job.py) is running" | tee -a "${LOG_FILE}"
+  echo "ERROR: no spark job (payments_cdc_job) is running" | tee -a "${LOG_FILE}"
   exit 1
 fi
 

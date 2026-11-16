@@ -65,3 +65,10 @@ htmlcov/
 # Project-specific
 docs/chaos_log.txt
 *.jar
+documents/chaos_log.txt
+node_modules/
+.expo/
+oncall/bin/
+oncall/mobile/dist/
+oncall/mobile/web-build/
+oncall/loadtest/*.tmp

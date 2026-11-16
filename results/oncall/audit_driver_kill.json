@@ -1,0 +1,21 @@
+{
+  "commit": "76edd81",
+  "dirty": true,
+  "generated_at_utc": "2026-11-16T06:05:23Z",
+  "command": "python oncall/tools/audit_driver_kill.py",
+  "kill_output": "KILL -9 spark pid=31285 @ 2026-11-16T05:59:32+00:00\nSpark driver killed. Restart the job manually and wait for drain + parity.",
+  "resumed_from_checkpoint": true,
+  "parity_exit_code": 0,
+  "parity_pass": true,
+  "parity": {
+    "Postgres rows": 2924,
+    "Delta live rows": 2924,
+    "missing_in_delta_total": 0,
+    "unaccounted (not in DLQ either)": 0,
+    "quarantined": 0,
+    "extra_in_delta": 0,
+    "value_mismatch": 0,
+    "duplicate_keys_in_delta": 0
+  },
+  "job_pid_now": 37805
+}
