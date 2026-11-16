@@ -54,3 +54,17 @@ Re-read this file first if context is lost. Branch: `feat/oncall-console`. Stack
 **Interview notes**: the hub's non-blocking fan-out and why a full buffer means "drop", not "wait"; what `seq` + `epoch` guarantee on resume (no gap, no duplicate, alerts before the snapshot in seq order; a restart changes the epoch so the client starts fresh); why parity says `catching_up` instead of crying wolf and why `mismatch` needs a drained stream; why lag could not come from a consumer group.
 
 **Next**: Phase 3 (GitHub OAuth with PKCE against a mock, allowlist/admin, rotating refresh tokens with reuse detection).
+
+## Phase 3: auth (mock GitHub OAuth, PKCE, rotation): DONE
+**Done**
+- `internal/auth`: HS256 JWT signer/verifier (HS256 only, issuer and expiry required), `Authenticate` / `RequireAdmin` middleware, the GitHub flow handlers (`start`, `callback`, `token` for code and refresh grants, `logout`). `internal/store/auth.go` + migration `002_auth.sql`: states, one-time codes and refresh tokens (hashes only) with atomic consume/rotate. `internal/mockgithub` + `cmd/mock-github` (authorize page, token exchange, `/user`). Wired in `cmd/oncall-api/auth.go` (enabled when `ONCALL_GITHUB_CLIENT_ID` is set).
+- Config in `.env` (generated): client id `mock-client-id`, generated client secret, allowlist `viewer-user,admin-user`, admins `admin-user`.
+
+**Check output**
+- Auth tests (in `internal/api/oauth_flow_test.go` through the real router + mock GitHub, and `internal/store/auth_test.go` against Postgres): PKCE mismatch rejected (and burns the code); state mismatch / replay / expiry rejected with no redirect; non-allowlisted user refused with no code; viewer 403 vs admin 200; refresh rotation; **reuse of an old refresh token revokes the family**; expired access token -> 401 `token_expired`, refresh then works; expired refresh/code; allowlist removal and demotion at refresh; logout revokes the family; redirect-uri hardening; secret never leaves the server; tokens stored only as hashes; 20 goroutines consume one code -> exactly 1 wins.
+- `go test -race ./...` (with Postgres), `go vet`, `staticcheck`, `gofmt`: all clean. Full list of test names: `go test -race -v ./...`.
+- curl walkthrough against the live API + mock GitHub: `results/oncall/auth_walkthrough.txt` (happy path, rotation, reuse detection killing the newest token, PKCE mismatch, forged state, viewer 403 / no token 401, outsider refused, logout).
+
+**Interview notes**: why PKCE when the server holds the secret; what refresh-token reuse detection catches (a token stolen before rotation); why the code is consumed before the verifier check; why only hashes are stored; what a stolen access token can still do (until expiry) and why that is acceptable here.
+
+**Next**: Phase 4 (Expo app, Jest, Playwright on the web build, screenshots).
