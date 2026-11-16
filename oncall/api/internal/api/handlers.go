@@ -414,6 +414,32 @@ func (s *server) registerDevice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"registered": true})
 }
 
+func (s *server) unregisterDevice(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	var req struct {
+		Token string `json:"expo_push_token"`
+	}
+	if err := decodeJSON(r, &req); err != nil || req.Token == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", errBadJSON.Error())
+		return
+	}
+	owner := p.Login
+	if p.IsAdmin() {
+		owner = "" // admins may remove any device
+	}
+	ok, err := s.Store.RemoveDeviceFor(r.Context(), req.Token, owner)
+	if err != nil {
+		slog.Error("unregister device", "err", err.Error())
+		writeError(w, http.StatusInternalServerError, "internal", "could not remove the device")
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "no such device")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"registered": false})
+}
+
 func (s *server) listAudit(w http.ResponseWriter, r *http.Request) {
 	cursor, _ := strconv.ParseInt(r.URL.Query().Get("cursor"), 10, 64)
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))

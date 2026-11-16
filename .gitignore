@@ -72,3 +72,11 @@ oncall/bin/
 oncall/mobile/dist/
 oncall/mobile/web-build/
 oncall/loadtest/*.tmp
+.run/
+oncall/mobile/e2e/.state.json
+oncall/mobile/test-results/
+oncall/mobile/playwright-report/
+oncall/mobile/expo-env.d.ts
+oncall/mobile/google-services.json
+oncall/mobile/GoogleService-Info.plist
+results/oncall/raw/ws_smoke.json

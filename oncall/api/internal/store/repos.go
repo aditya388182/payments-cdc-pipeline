@@ -90,6 +90,12 @@ func (s *Store) UpsertDevice(ctx context.Context, token, user, platform string) 
 	return err
 }
 
+// RemoveDeviceFor deletes the device if it belongs to `user` (an empty user means any owner, for admins).
+func (s *Store) RemoveDeviceFor(ctx context.Context, token, user string) (bool, error) {
+	tag, err := s.Pool.Exec(ctx, `delete from devices where token=$1 and ($2 = '' or user_login=$2)`, token, user)
+	return tag.RowsAffected() > 0, err
+}
+
 func (s *Store) RemoveDevice(ctx context.Context, token string) error {
 	_, err := s.Pool.Exec(ctx, `delete from devices where token=$1`, token)
 	return err

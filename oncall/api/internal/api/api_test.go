@@ -62,6 +62,16 @@ func (f *fakeStore) UpsertDevice(_ context.Context, token, user, _ string) error
 	f.devices[token] = user
 	return nil
 }
+func (f *fakeStore) RemoveDeviceFor(_ context.Context, token, user string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	owner, ok := f.devices[token]
+	if !ok || (user != "" && owner != user) {
+		return false, nil
+	}
+	delete(f.devices, token)
+	return true, nil
+}
 func (f *fakeStore) AddAudit(_ context.Context, e store.AuditEntry) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -236,7 +246,7 @@ func errCode(t *testing.T, b []byte) string {
 // ---- authentication / authorization ---------------------------------------------------------
 
 var allRoutes = []struct{ method, path string }{
-	{"GET", "/v1/live"}, {"GET", "/v1/snapshot"}, {"GET", "/v1/alerts"}, {"POST", "/v1/alerts/1/ack"}, {"GET", "/v1/dlq"},
+	{"GET", "/v1/live"}, {"GET", "/v1/snapshot"}, {"DELETE", "/v1/devices"}, {"GET", "/v1/alerts"}, {"POST", "/v1/alerts/1/ack"}, {"GET", "/v1/dlq"},
 	{"GET", "/v1/dlq/1"}, {"POST", "/v1/devices"}, {"GET", "/v1/generator"}, {"GET", "/v1/me"},
 	{"POST", "/v1/dlq/1/replay"}, {"POST", "/v1/generator"}, {"GET", "/v1/audit"},
 }
@@ -565,6 +575,28 @@ func TestRegisterDeviceValidatesAndStores(t *testing.T) {
 	}
 	if e.st.devices["ExponentPushToken[abcdefghij123]"] != "viewer-user" {
 		t.Fatalf("devices = %v", e.st.devices)
+	}
+}
+
+func TestUnregisterDeviceOwnerOnlyUnlessAdmin(t *testing.T) {
+	e := newEnv(t)
+	viewer := e.token(t, "viewer-user", auth.RoleViewer)
+	other := e.token(t, "someone-else", auth.RoleViewer)
+	admin := e.token(t, "admin-user", auth.RoleAdmin)
+	tok := "ExponentPushToken[abcdefghij123]"
+	e.do(t, "POST", "/v1/devices", viewer, map[string]any{"expo_push_token": tok}, nil)
+	if resp, _ := e.do(t, "DELETE", "/v1/devices", other, map[string]any{"expo_push_token": tok}, nil); resp.StatusCode != 404 {
+		t.Fatalf("another viewer removed someone's device: %d", resp.StatusCode)
+	}
+	if resp, _ := e.do(t, "DELETE", "/v1/devices", "", map[string]any{"expo_push_token": tok}, nil); resp.StatusCode != 401 {
+		t.Fatalf("no token: %d", resp.StatusCode)
+	}
+	if resp, _ := e.do(t, "DELETE", "/v1/devices", viewer, map[string]any{"expo_push_token": tok}, nil); resp.StatusCode != 200 {
+		t.Fatalf("owner: %d", resp.StatusCode)
+	}
+	e.do(t, "POST", "/v1/devices", viewer, map[string]any{"expo_push_token": tok}, nil)
+	if resp, _ := e.do(t, "DELETE", "/v1/devices", admin, map[string]any{"expo_push_token": tok}, nil); resp.StatusCode != 200 {
+		t.Fatalf("admin: %d", resp.StatusCode)
 	}
 }
 

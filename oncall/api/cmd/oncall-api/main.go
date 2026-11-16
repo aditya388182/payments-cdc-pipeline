@@ -117,7 +117,11 @@ func run() error {
 	srv := &http.Server{Addr: cfg.Addr, Handler: api.New(deps), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 120 * time.Second}
 	msrv := &http.Server{Addr: cfg.MetricsAddr, Handler: metricsMux(m), ReadHeaderTimeout: 5 * time.Second}
 	errc := make(chan error, 2)
-	go func() { errc <- srv.ListenAndServe() }()
+	ln, err := listenAPI(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", cfg.Addr, err)
+	}
+	go func() { errc <- srv.Serve(ln) }()
 	go func() { errc <- msrv.ListenAndServe() }()
 	slog.Info("oncall-api listening", "addr", cfg.Addr, "metrics", cfg.MetricsAddr, "push_sender", cfg.PushSender, "max_rate", cfg.MaxRate)
 

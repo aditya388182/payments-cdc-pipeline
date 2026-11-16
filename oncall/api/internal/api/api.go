@@ -29,6 +29,7 @@ type Store interface {
 	alerts.Store
 	alerts.Devices
 	UpsertDevice(ctx context.Context, token, user, platform string) error
+	RemoveDeviceFor(ctx context.Context, token, user string) (bool, error)
 	AddAudit(ctx context.Context, e store.AuditEntry) error
 	ListAudit(ctx context.Context, cursor int64, limit int) ([]store.AuditEntry, int64, error)
 	IdempotencyBegin(ctx context.Context, actor, key, route, hash string) (store.IdemState, store.StoredResponse, error)
@@ -96,6 +97,7 @@ func New(d Deps) http.Handler {
 			g.Get("/dlq", s.listDLQ)
 			g.Get("/dlq/{id}", s.getDLQ)
 			g.Post("/devices", s.registerDevice)
+			g.Delete("/devices", s.unregisterDevice)
 			g.Get("/generator", s.generatorStatus)
 			g.Get("/me", s.me)
 
@@ -182,7 +184,7 @@ func (s *server) cors(next http.Handler) http.Handler {
 			h.Set("Access-Control-Allow-Origin", o)
 			h.Set("Vary", "Origin")
 			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key")
-			h.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			h.Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 			h.Set("Access-Control-Expose-Headers", "Idempotent-Replayed")
 			h.Set("Access-Control-Max-Age", "600")
 		}

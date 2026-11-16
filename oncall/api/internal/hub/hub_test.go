@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aditya388182/payments-cdc-pipeline/oncall/api/internal/metrics"
 	"github.com/coder/websocket"
 	"go.uber.org/goleak"
 )
@@ -318,7 +319,8 @@ func TestAnAnsweringPeerStaysConnectedThroughPings(t *testing.T) {
 }
 
 func TestSlowWebSocketClientIsDisconnectedNotTheOthers(t *testing.T) {
-	h := New(WithBuffer(64))
+	m := metrics.New()
+	h := New(WithBuffer(64), WithMetrics(m))
 	_, url := wsServer(t, h, WSOptions{WriteTimeout: 300 * time.Millisecond})
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -363,6 +365,13 @@ func TestSlowWebSocketClientIsDisconnectedNotTheOthers(t *testing.T) {
 	if got.Load() <= before {
 		t.Fatal("the fast client stopped receiving after the slow one was dropped")
 	}
+	// the disconnect is counted: either the bounded buffer filled (dropped) or a frame write timed out
+	rec := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, "oncall_ws_clients_dropped_total 1") && !strings.Contains(body, "oncall_ws_write_timeouts_total 1") {
+		t.Fatalf("the slow client's disconnect was not counted in any metric:\n%s", grepLines(body, "oncall_ws_"))
+	}
 	// the slow connection really is closed by the server: draining it ends in an error
 	drainCtx, dcancel := context.WithTimeout(ctx, 10*time.Second)
 	defer dcancel()
@@ -376,6 +385,16 @@ func TestSlowWebSocketClientIsDisconnectedNotTheOthers(t *testing.T) {
 	}
 	fast.Close(websocket.StatusNormalClosure, "")
 	<-fastDone
+}
+
+func grepLines(body, prefix string) string {
+	var out []string
+	for _, l := range strings.Split(body, "\n") {
+		if strings.HasPrefix(l, prefix) {
+			out = append(out, l)
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 func itoa(n int64) string { b, _ := json.Marshal(n); return string(b) }

@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -81,6 +82,7 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request, opts WSOptions) {
 				err := conn.Ping(pctx)
 				pcancel()
 				if err != nil {
+					h.m.WSPingTimeout()
 					slog.Info("ws ping failed, closing", "client", client.ID, "err", err.Error())
 					cancel() // a dead peer never answers the close handshake: do not wait for it
 					return
@@ -107,6 +109,9 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request, opts WSOptions) {
 				return
 			}
 			if err := write(f.Data); err != nil {
+				if errors.Is(err, context.DeadlineExceeded) { // the peer stopped draining its socket
+					h.m.WSWriteTimeout()
+				}
 				return
 			}
 		}

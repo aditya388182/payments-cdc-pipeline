@@ -58,6 +58,9 @@ func TestDeviceRegistrationUpsertsAndLists(t *testing.T) {
 	if err != nil || len(toks) != 2 {
 		t.Fatalf("tokens=%v err=%v", toks, err)
 	}
+	if ok, _ := st.RemoveDeviceFor(ctx, "ExponentPushToken[def]", "someone-else"); ok {
+		t.Fatal("removed a device owned by another user")
+	}
 	_ = st.RemoveDevice(ctx, "ExponentPushToken[abc]")
 	toks, _ = st.Tokens(ctx)
 	if len(toks) != 1 || toks[0] != "ExponentPushToken[def]" {

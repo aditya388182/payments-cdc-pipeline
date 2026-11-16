@@ -13,43 +13,47 @@ import (
 type M struct {
 	Reg *prometheus.Registry
 
-	wsClients     prometheus.Gauge
-	wsDropped     prometheus.Counter
-	wsConnects    prometheus.Counter
-	snapshots     prometheus.Counter
-	snapshotBuild prometheus.Histogram
-	collectorErrs *prometheus.CounterVec
-	httpReqs      *prometheus.CounterVec
-	httpDur       *prometheus.HistogramVec
-	replays       *prometheus.CounterVec
-	alertsFiring  prometheus.Gauge
-	pushes        *prometheus.CounterVec
-	grpcCalls     *prometheus.CounterVec
-	lagTotal      prometheus.Gauge
-	parityState   *prometheus.GaugeVec
+	wsClients       prometheus.Gauge
+	wsDropped       prometheus.Counter
+	wsConnects      prometheus.Counter
+	wsWriteTimeouts prometheus.Counter
+	wsPingTimeouts  prometheus.Counter
+	snapshots       prometheus.Counter
+	snapshotBuild   prometheus.Histogram
+	collectorErrs   *prometheus.CounterVec
+	httpReqs        *prometheus.CounterVec
+	httpDur         *prometheus.HistogramVec
+	replays         *prometheus.CounterVec
+	alertsFiring    prometheus.Gauge
+	pushes          *prometheus.CounterVec
+	grpcCalls       *prometheus.CounterVec
+	lagTotal        prometheus.Gauge
+	parityState     *prometheus.GaugeVec
 }
 
 func New() *M {
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	m := &M{
-		Reg:           reg,
-		wsClients:     prometheus.NewGauge(prometheus.GaugeOpts{Name: "oncall_ws_clients", Help: "Connected WebSocket clients."}),
-		wsDropped:     prometheus.NewCounter(prometheus.CounterOpts{Name: "oncall_ws_clients_dropped_total", Help: "Clients disconnected because their buffer was full (slow consumer)."}),
-		wsConnects:    prometheus.NewCounter(prometheus.CounterOpts{Name: "oncall_ws_connects_total", Help: "WebSocket connections accepted."}),
-		snapshots:     prometheus.NewCounter(prometheus.CounterOpts{Name: "oncall_snapshots_published_total", Help: "Snapshots broadcast."}),
-		snapshotBuild: prometheus.NewHistogram(prometheus.HistogramOpts{Name: "oncall_snapshot_build_seconds", Help: "Time to build and publish one snapshot.", Buckets: prometheus.ExponentialBuckets(0.0001, 4, 8)}),
-		collectorErrs: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "oncall_collector_errors_total", Help: "Collector failures by source."}, []string{"source"}),
-		httpReqs:      prometheus.NewCounterVec(prometheus.CounterOpts{Name: "oncall_http_requests_total", Help: "HTTP requests."}, []string{"route", "method", "code"}),
-		httpDur:       prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "oncall_http_request_seconds", Help: "HTTP request duration.", Buckets: prometheus.DefBuckets}, []string{"route"}),
-		replays:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "oncall_replay_results_total", Help: "Replay outcomes."}, []string{"status"}),
-		alertsFiring:  prometheus.NewGauge(prometheus.GaugeOpts{Name: "oncall_alerts_active", Help: "Alerts currently firing or acknowledged."}),
-		pushes:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "oncall_push_notifications_total", Help: "Push notifications attempted."}, []string{"result"}),
-		grpcCalls:     prometheus.NewCounterVec(prometheus.CounterOpts{Name: "oncall_grpc_client_calls_total", Help: "gRPC calls to replay-svc."}, []string{"method", "code"}),
-		lagTotal:      prometheus.NewGauge(prometheus.GaugeOpts{Name: "oncall_consumer_lag_total", Help: "Total consumer lag in the last snapshot."}),
-		parityState:   prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "oncall_parity_state", Help: "1 for the current parity state."}, []string{"state"}),
+		Reg:             reg,
+		wsClients:       prometheus.NewGauge(prometheus.GaugeOpts{Name: "oncall_ws_clients", Help: "Connected WebSocket clients."}),
+		wsDropped:       prometheus.NewCounter(prometheus.CounterOpts{Name: "oncall_ws_clients_dropped_total", Help: "Clients disconnected because their buffer was full (slow consumer)."}),
+		wsConnects:      prometheus.NewCounter(prometheus.CounterOpts{Name: "oncall_ws_connects_total", Help: "WebSocket connections accepted."}),
+		wsPingTimeouts:  prometheus.NewCounter(prometheus.CounterOpts{Name: "oncall_ws_ping_timeouts_total", Help: "Connections closed because the peer did not answer a ping in time."}),
+		wsWriteTimeouts: prometheus.NewCounter(prometheus.CounterOpts{Name: "oncall_ws_write_timeouts_total", Help: "Connections closed because a frame could not be written in time (peer stopped reading)."}),
+		snapshots:       prometheus.NewCounter(prometheus.CounterOpts{Name: "oncall_snapshots_published_total", Help: "Snapshots broadcast."}),
+		snapshotBuild:   prometheus.NewHistogram(prometheus.HistogramOpts{Name: "oncall_snapshot_build_seconds", Help: "Time to build and publish one snapshot.", Buckets: prometheus.ExponentialBuckets(0.0001, 4, 8)}),
+		collectorErrs:   prometheus.NewCounterVec(prometheus.CounterOpts{Name: "oncall_collector_errors_total", Help: "Collector failures by source."}, []string{"source"}),
+		httpReqs:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "oncall_http_requests_total", Help: "HTTP requests."}, []string{"route", "method", "code"}),
+		httpDur:         prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "oncall_http_request_seconds", Help: "HTTP request duration.", Buckets: prometheus.DefBuckets}, []string{"route"}),
+		replays:         prometheus.NewCounterVec(prometheus.CounterOpts{Name: "oncall_replay_results_total", Help: "Replay outcomes."}, []string{"status"}),
+		alertsFiring:    prometheus.NewGauge(prometheus.GaugeOpts{Name: "oncall_alerts_active", Help: "Alerts currently firing or acknowledged."}),
+		pushes:          prometheus.NewCounterVec(prometheus.CounterOpts{Name: "oncall_push_notifications_total", Help: "Push notifications attempted."}, []string{"result"}),
+		grpcCalls:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "oncall_grpc_client_calls_total", Help: "gRPC calls to replay-svc."}, []string{"method", "code"}),
+		lagTotal:        prometheus.NewGauge(prometheus.GaugeOpts{Name: "oncall_consumer_lag_total", Help: "Total consumer lag in the last snapshot."}),
+		parityState:     prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "oncall_parity_state", Help: "1 for the current parity state."}, []string{"state"}),
 	}
-	reg.MustRegister(m.wsClients, m.wsDropped, m.wsConnects, m.snapshots, m.snapshotBuild, m.collectorErrs, m.httpReqs, m.httpDur,
+	reg.MustRegister(m.wsClients, m.wsDropped, m.wsConnects, m.wsWriteTimeouts, m.wsPingTimeouts, m.snapshots, m.snapshotBuild, m.collectorErrs, m.httpReqs, m.httpDur,
 		m.replays, m.alertsFiring, m.pushes, m.grpcCalls, m.lagTotal, m.parityState)
 	return m
 }
@@ -66,6 +70,20 @@ func (m *M) WSClients(delta float64) {
 func (m *M) WSDropped() {
 	if m != nil {
 		m.wsDropped.Inc()
+	}
+}
+
+// WSWriteTimeout counts connections closed because a frame could not be written in time (the peer stopped reading).
+func (m *M) WSWriteTimeout() {
+	if m != nil {
+		m.wsWriteTimeouts.Inc()
+	}
+}
+
+// WSPingTimeout counts connections closed because the peer did not answer a ping in time.
+func (m *M) WSPingTimeout() {
+	if m != nil {
+		m.wsPingTimeouts.Inc()
 	}
 }
 func (m *M) WSConnect() {

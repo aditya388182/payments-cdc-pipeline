@@ -57,6 +57,7 @@ type Config struct {
 	RefreshTTL         time.Duration
 	AllowedRedirects   []string // exact redirect_uri prefixes the app may use
 	CORSOrigins        []string // browser origins allowed to call the API (the Expo web build)
+	WSSendBuf          int      // load test only: SO_SNDBUF for the API listener (0 = OS default)
 }
 
 func FromEnv() (Config, error) {
@@ -96,6 +97,7 @@ func FromEnv() (Config, error) {
 		Admins:             set(os.Getenv("ONCALL_ADMINS")),
 		AccessTTL:          dur("ONCALL_ACCESS_TTL", 15*time.Minute),
 		RefreshTTL:         dur("ONCALL_REFRESH_TTL", 30*24*time.Hour),
+		WSSendBuf:          num("ONCALL_WS_SNDBUF", 0),
 		CORSOrigins:        split(get("ONCALL_CORS_ORIGINS", "http://127.0.0.1:8081,http://localhost:8081,http://127.0.0.1:19006,http://localhost:19006")),
 		AllowedRedirects:   split(get("ONCALL_ALLOWED_REDIRECTS", "oncall://,exp://,http://127.0.0.1,http://localhost")),
 	}

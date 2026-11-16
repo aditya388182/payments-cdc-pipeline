@@ -20,6 +20,8 @@ class SparkRecordValidator:
         self._spark = None
 
     def warm_up(self) -> None:
+        import sys
+
         from pyspark.sql import SparkSession
 
         with self._lock:
@@ -27,6 +29,10 @@ class SparkRecordValidator:
                 self._spark = (
                     SparkSession.builder.appName("replay-svc-validate")
                     .master("local[1]")
+                    # Python workers must be the same interpreter as this process. Without it Spark picks `python3` from
+                    # PATH (3.12 on the box) and aborts with PYTHON_VERSION_MISMATCH (found by the Playwright run).
+                    .config("spark.pyspark.python", sys.executable)
+                    .config("spark.pyspark.driver.python", sys.executable)
                     .config("spark.ui.enabled", "false")
                     .config("spark.driver.bindAddress", "127.0.0.1")
                     .config("spark.sql.shuffle.partitions", "1")
