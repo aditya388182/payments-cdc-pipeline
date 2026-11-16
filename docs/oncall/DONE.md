@@ -7,7 +7,7 @@ Numbers in sections 2 and 4 are written by scripts from `results/oncall/*.json` 
 
 ## 1. How to run everything, and which ports to tunnel
 
-Everything listens on **127.0.0.1 only**. From your laptop, tunnel the ports you need:
+The console's own services (API, metrics, replay-svc, mock GitHub, web server, SeaweedFS) listen on **127.0.0.1 only**. The repo's original compose services (Postgres, Kafka, Schema Registry, Connect, Prometheus, Pushgateway, Grafana) were published on all interfaces; the compose file now prefixes them with `127.0.0.1:` too, but containers already running keep their old mapping until re-created (re-creating the object store without its new volume would wipe the lake), so also keep this box's security group closed and note Spark's UI on 4040 is not loopback-bound. From your laptop, tunnel the ports you need:
 
 ```bash
 ssh -N -L 127.0.0.1:8088:127.0.0.1:8088 \
@@ -208,9 +208,9 @@ Load test label: local load test: clients and server on the same box (loopback),
 
 <details><summary><code>results/oncall/audit_summary.json</code> (99 values)</summary>
 
-- `commit` = 320ed1e
+- `commit` = 48b17c0
 - `dirty` = true
-- `generated_at_utc` = 2026-11-16T08:42:47Z
+- `generated_at_utc` = 2026-11-16T08:55:21Z
 - `command` = python oncall/tools/audit.py
 - `rows[0].num` = 1
 - `rows[0].claim` = The stack runs: Postgres, Debezium, Kafka, Schema Registry, Spark job, Delta on S3-compatible storage
@@ -259,7 +259,7 @@ Load test label: local load test: clients and server on the same box (loopback),
 - `rows[6].exists` = yes
 - `rows[6].runs` = yes
 - `rows[6].tested` = oncall/tools/audit_skew.py (reruns the repo job and reads Spark REST task stats)
-- `rows[6].verdict` = TRUE (numbers from screenshots; mechanism and direction reproduced)
+- `rows[6].verdict` = PARTLY TRUE (mechanism and direction reproduced; the rerun on smaller data gave a smaller cut, so 82% rests on the screenshots)
 - `rows[6].action` = Keep, but name the metric: the ratio is max-to-min records per task in the final stage, mechanism is two-phase salted aggregation on (merchant_id, salt) in the aggregation consumer only. The rerun on a smaller dataset gave 7.86x to 2.18x (72.3%), so the 82% figure rests on the committed screenshots.
 - `rows[7].num` = 8
 - `rows[7].claim` = Avro in the path (Schema Registry, schema-id decode)
@@ -856,3 +856,13 @@ The race detector found no data race in the final suite; the goroutine-leak chec
 ### The questions this prepares you for (SPEC section 14)
 
 One-line answers live in the README ("What it proves") and the sections above: the hub and slow clients, `seq` resume, why replay goes through a service that reuses the validator, why replaying twice is safe (and the test that proves it), why parity cannot compare counts naively, why PKCE when the server holds the secret and what reuse detection catches, why idempotency keys, what the race detector found (nothing; the bugs that mattered were found end to end), what k6 measured and what limits it (one box, loopback), what breaks BACKWARD compatibility in Avro and why the gate is in CI, and what the audit changed on the resume.
+
+---
+
+## Reviewer notes (independent subagent review, all addressed)
+
+- The "127.0.0.1 only" statement was too broad: reworded above and the compose ports prefixed.
+- The slow-client result is attributed to the ping timeout (the buffer-full path is unit-tested), in the README, the bullet and D-019.
+- goleak now runs in every Go package that starts goroutines or servers (api, collect, alerts, push, store, hub, generator, replayclient).
+- AUDIT row 7 now says PARTLY TRUE; the exactly-once run-1 logs are committed with the results.
+- Known and accepted, written down: an access token keeps its role for up to 15 minutes after a demotion; two simultaneous refreshes with the same token revoke the session (the app single-flights); a crashed admin request leaves its Idempotency-Key "in progress" for 2 minutes; rejected generator requests (400/422) are not audited because nothing executed.

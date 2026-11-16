@@ -1,0 +1,118 @@
+:: loading settings :: url = jar:file:/home/ubuntu/payments-cdc-pipeline/venv/lib/python3.10/site-packages/pyspark/jars/ivy-2.5.1.jar!/org/apache/ivy/core/settings/ivysettings.xml
+[parity] Postgres rows                    = 12197
+[parity] Delta live rows                  = 12126
+[parity] missing_in_delta_total           = 71
+[parity] unaccounted (not in DLQ either)  = 0
+[parity] quarantined                      = 71
+[parity] extra_in_delta                   = 0
+[parity] value_mismatch                   = 0
+[parity] duplicate_keys_in_delta          = 0
+
+ORACLE FAIL: Expected quarantined to be 0 or 53, got 71
+Ivy Default Cache set to: /home/ubuntu/.ivy2/cache
+The jars for the packages stored in: /home/ubuntu/.ivy2/jars
+io.delta#delta-spark_2.12 added as a dependency
+org.apache.hadoop#hadoop-aws added as a dependency
+org.postgresql#postgresql added as a dependency
+org.apache.spark#spark-sql-kafka-0-10_2.12 added as a dependency
+:: resolving dependencies :: org.apache.spark#spark-submit-parent-0638c535-88ed-4e1d-8c35-4d8a7c80f668;1.0
+	confs: [default]
+	found io.delta#delta-spark_2.12;3.1.0 in central
+	found io.delta#delta-storage;3.1.0 in central
+	found org.antlr#antlr4-runtime;4.9.3 in central
+	found org.apache.hadoop#hadoop-aws;3.3.4 in central
+	found com.amazonaws#aws-java-sdk-bundle;1.12.262 in central
+	found org.wildfly.openssl#wildfly-openssl;1.0.7.Final in central
+	found org.postgresql#postgresql;42.7.3 in central
+	found org.checkerframework#checker-qual;3.42.0 in central
+	found org.apache.spark#spark-sql-kafka-0-10_2.12;3.5.1 in central
+	found org.apache.spark#spark-token-provider-kafka-0-10_2.12;3.5.1 in central
+	found org.apache.kafka#kafka-clients;3.4.1 in central
+	found org.lz4#lz4-java;1.8.0 in central
+	found org.xerial.snappy#snappy-java;1.1.10.3 in central
+	found org.slf4j#slf4j-api;2.0.7 in central
+	found org.apache.hadoop#hadoop-client-runtime;3.3.4 in central
+	found org.apache.hadoop#hadoop-client-api;3.3.4 in central
+	found commons-logging#commons-logging;1.1.3 in central
+	found com.google.code.findbugs#jsr305;3.0.0 in central
+	found org.apache.commons#commons-pool2;2.11.1 in central
+:: resolution report :: resolve 601ms :: artifacts dl 22ms
+	:: modules in use:
+	com.amazonaws#aws-java-sdk-bundle;1.12.262 from central in [default]
+	com.google.code.findbugs#jsr305;3.0.0 from central in [default]
+	commons-logging#commons-logging;1.1.3 from central in [default]
+	io.delta#delta-spark_2.12;3.1.0 from central in [default]
+	io.delta#delta-storage;3.1.0 from central in [default]
+	org.antlr#antlr4-runtime;4.9.3 from central in [default]
+	org.apache.commons#commons-pool2;2.11.1 from central in [default]
+	org.apache.hadoop#hadoop-aws;3.3.4 from central in [default]
+	org.apache.hadoop#hadoop-client-api;3.3.4 from central in [default]
+	org.apache.hadoop#hadoop-client-runtime;3.3.4 from central in [default]
+	org.apache.kafka#kafka-clients;3.4.1 from central in [default]
+	org.apache.spark#spark-sql-kafka-0-10_2.12;3.5.1 from central in [default]
+	org.apache.spark#spark-token-provider-kafka-0-10_2.12;3.5.1 from central in [default]
+	org.checkerframework#checker-qual;3.42.0 from central in [default]
+	org.lz4#lz4-java;1.8.0 from central in [default]
+	org.postgresql#postgresql;42.7.3 from central in [default]
+	org.slf4j#slf4j-api;2.0.7 from central in [default]
+	org.wildfly.openssl#wildfly-openssl;1.0.7.Final from central in [default]
+	org.xerial.snappy#snappy-java;1.1.10.3 from central in [default]
+	---------------------------------------------------------------------
+	|                  |            modules            ||   artifacts   |
+	|       conf       | number| search|dwnlded|evicted|| number|dwnlded|
+	---------------------------------------------------------------------
+	|      default     |   19  |   0   |   0   |   0   ||   19  |   0   |
+	---------------------------------------------------------------------
+:: retrieving :: org.apache.spark#spark-submit-parent-0638c535-88ed-4e1d-8c35-4d8a7c80f668
+	confs: [default]
+	0 artifacts copied, 19 already retrieved (0kB/10ms)
+26/11/16 08:38:44 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/11/16 08:38:45 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+26/11/16 08:38:51 WARN MetricsConfig: Cannot locate configuration: tried hadoop-metrics2-s3a-file-system.properties,hadoop-metrics2.properties
+
+[Stage 0:>                                                          (0 + 1) / 1]
+
+                                                                                
+26/11/16 08:38:58 WARN SparkStringUtils: Truncated the string representation of a plan since it was too large. This behavior can be adjusted by setting 'spark.sql.debug.maxToStringFields'.
+
+[Stage 4:>                                                         (0 + 2) / 50]
+
+[Stage 4:==>                                                       (2 + 2) / 50]
+26/11/16 08:39:01 WARN GarbageCollectionMetrics: To enable non-built-in garbage collector(s) List(G1 Concurrent GC), users should configure it(them) to spark.eventLog.gcMetrics.youngGenerationGarbageCollectors or spark.eventLog.gcMetrics.oldGenerationGarbageCollectors
+
+[Stage 4:=====>                                                    (5 + 2) / 50]
+
+[Stage 4:============>                                            (11 + 2) / 50]
+
+[Stage 4:=================>                                       (15 + 2) / 50]
+
+[Stage 4:=======================>                                 (21 + 2) / 50]
+
+[Stage 4:============================>                            (25 + 2) / 50]
+
+[Stage 4:====================================>                    (32 + 2) / 50]
+
+[Stage 4:==========================================>              (37 + 2) / 50]
+
+[Stage 4:=================================================>       (43 + 2) / 50]
+
+                                                                                
+26/11/16 08:39:03 WARN AdminClientConfig: These configurations '[key.deserializer, value.deserializer, enable.auto.commit, max.poll.records, auto.offset.reset]' were supplied but are not used yet.
+
+[Stage 18:>                                                         (0 + 1) / 1]
+
+[Stage 20:=====>         (77 + 3) / 200][Stage 21:>                 (0 + 0) / 1]
+
+[Stage 20:========>     (116 + 2) / 200][Stage 21:>                 (0 + 0) / 1]
+
+[Stage 20:==========>   (143 + 3) / 200][Stage 21:>                 (0 + 0) / 1]
+
+[Stage 20:=============>(186 + 2) / 200][Stage 21:>                 (0 + 0) / 1]
+
+                                                                                
+
+[Stage 23:========================================>             (150 + 2) / 200]
+
+                                                                                

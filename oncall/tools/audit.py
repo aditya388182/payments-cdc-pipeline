@@ -123,7 +123,7 @@ add(7, '"data skew cut 82% (16.4x to 3.0x) with salted aggregation"', "yes", "ye
       f"reduction {skew['reduction_pct']}%")],
     'Keep, but name the metric: the ratio is max-to-min records per task in the final stage, mechanism is two-phase salted aggregation on (merchant_id, salt) in the aggregation consumer only. '
     f'The rerun on a smaller dataset gave {nv["max_over_min"]}x to {sl["max_over_min"]}x ({skew["reduction_pct"]}%), so the 82% figure rests on the committed screenshots.',
-    "TRUE (numbers from screenshots; mechanism and direction reproduced)")
+    "PARTLY TRUE (mechanism and direction reproduced; the rerun on smaller data gave a smaller cut, so 82% rests on the screenshots)")
 
 # 8 ---------------------------------------------------------------------------------------------
 cfg = sh("grep -n 'converter' connectors/debezium-postgres-connector.json | cut -c1-110")

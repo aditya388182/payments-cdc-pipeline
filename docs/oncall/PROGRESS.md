@@ -98,3 +98,8 @@ Re-read this file first if context is lost. Branch: `feat/oncall-console`. Stack
 **Interview notes**: what breaks BACKWARD (and why a removed field does not); why the gate fails closed; why the slow-client drop needed a smaller socket buffer to show up in 5 minutes and what actually removed the slow clients.
 
 **Next**: Phase 6 is the user's (BLOCKERS.md). Phase 7: README, GIF, bullets, subagent review, DONE.md.
+
+## Phase 7: README, demo GIF, bullets, review: DONE
+- README "On-Call Console" section with a generated numbers table; `docs/oncall/demo.gif` (captioned real screenshots); `make bullets` (0 MISSING except the two phone-only checks); `docs/oncall/DONE.md`.
+- Independent subagent review against SPEC section 13: findings fixed (see DONE.md "Reviewer notes"): loopback wording and compose ports, slow-client attribution, goleak coverage, AUDIT row 7 verdict, committed run-1 logs. `expo-doctor`: 20/20 checks passed.
+- Remaining for the user: Phase 6 (docs/oncall/BLOCKERS.md).

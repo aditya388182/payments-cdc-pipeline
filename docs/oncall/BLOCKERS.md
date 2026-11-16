@@ -4,7 +4,7 @@ Everything the build could do without those is done and tested against a mock Gi
 Until you have done the steps below, the honest wording is: **"tested with a fake push sender and a mock OAuth server"**.
 Nothing here needs code changes except where a step says so.
 
-Ports you will use through your SSH tunnel to this box (everything on the box listens on 127.0.0.1 only):
+Ports you will use through your SSH tunnel to this box (the console's services listen on 127.0.0.1 only; see DONE.md for the original compose services):
 
 | Port | What | Needed for |
 |---|---|---|

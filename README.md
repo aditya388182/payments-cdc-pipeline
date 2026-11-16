@@ -623,13 +623,13 @@ The screens (Expo web build driven by Playwright; every screen is in [`docs/onca
  Expo app (React Native, TypeScript strict) ◄── WebSocket /v1/live, REST /v1/*, GitHub OAuth 2.0 with PKCE
 ```
 
-**What it proves.** *Software engineering:* a Go WebSocket hub where every client has its own bounded buffer (a slow phone is dropped and reconnects with its last `seq`, it never slows the others); gRPC between Go and Python; OAuth 2.0 with PKCE, an allow-list, admin/viewer roles and rotating refresh tokens with reuse detection; admin actions that need an `Idempotency-Key` and write an audit row; race-detector tests; a k6 load test. *Data engineering:* replay goes back through the same validator and the LSN guard makes the second replay a no-op (proven by a test that also publishes the record to Kafka a second time); parity is lag-aware (`in sync` / `catching up`, and `mismatch` only after the stream has drained); an Avro BACKWARD compatibility gate and a `buf` gate in CI.
+**What it proves.** *Software engineering:* a Go WebSocket hub where every client has its own bounded buffer (a slow phone is dropped and reconnects with its last `seq`, it never slows the others; the buffer-full path is unit-tested, while in the k6 run the slow readers were removed by the ping timeout, see D-019); gRPC between Go and Python; OAuth 2.0 with PKCE, an allow-list, admin/viewer roles and rotating refresh tokens with reuse detection; admin actions that need an `Idempotency-Key` and write an audit row; race-detector tests; a k6 load test. *Data engineering:* replay goes back through the same validator and the LSN guard makes the second replay a no-op (proven by a test that also publishes the record to Kafka a second time); parity is lag-aware (`in sync` / `catching up`, and `mismatch` only after the stream has drained); an Avro BACKWARD compatibility gate and a `buf` gate in CI.
 
 ### Run it
 
 ```bash
 make env            # generate a git-ignored .env with random local dev values (never printed)
-make oncall-up      # data plane (docker compose), Spark job, replay-svc, mock GitHub, Go API; everything binds to 127.0.0.1
+make oncall-up      # data plane (docker compose), Spark job, replay-svc, mock GitHub, Go API; the console services bind to 127.0.0.1 (the repo's original compose ports are now prefixed 127.0.0.1 in the file; running containers keep their old mapping until re-created)
 make oncall-e2e     # Playwright on the Expo web build with the mock OAuth server; writes screenshots and results/oncall/e2e.json
 make ws-load        # k6: 1,000 WebSocket clients, then the slow-client variant; writes results/oncall/ws_load.json
 make bullets        # resume bullets with numbers read from results/oncall/*.json

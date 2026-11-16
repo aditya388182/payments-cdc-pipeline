@@ -53,7 +53,7 @@ def main() -> int:
     ]
     two_page = [
         "Go console service (chi, pgx): a WebSocket hub pushing throughput, consumer lag, freshness and lag-aware parity every 2 seconds, with a bounded buffer per client "
-        f"(with {get(ws, 'fast_clients_unaffected_by_slow_ones.slow_clients_dropped_by_server')} deliberately slow readers the server disconnected them, median "
+        f"(the buffer-full drop is unit-tested; in the k6 run, with {get(ws, 'fast_clients_unaffected_by_slow_ones.slow_clients_dropped_by_server')} deliberately slow readers the server disconnected them through its ping timeout, median "
         f"{get(ws, 'fast_clients_unaffected_by_slow_ones.median_seconds_until_a_slow_client_was_dropped', '{:.0f}')} s after connecting, while the other "
         f"{get(slow, 'connections_established', '{:,}')} clients kept receiving at p95 {get(slow, 'delivery_latency_ms.p95', '{:.0f}')} ms against "
         f"{get(base, 'delivery_latency_ms.p95', '{:.0f}')} ms without them).",

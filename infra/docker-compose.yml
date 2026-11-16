@@ -13,7 +13,7 @@ services:
       POSTGRES_PASSWORD: payments
       POSTGRES_DB: payments
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
@@ -38,7 +38,7 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
     ports:
-      - "29092:29092"
+      - "127.0.0.1:29092:29092"
 
   schema-registry:
     image: confluentinc/cp-schema-registry:7.6.1
@@ -50,7 +50,7 @@ services:
       SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:9092
       SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
 
   connect:
     image: confluentinc/cp-kafka-connect:7.6.1
@@ -59,7 +59,7 @@ services:
       - kafka
       - schema-registry
     ports:
-      - "8083:8083"
+      - "127.0.0.1:8083:8083"
     environment:
       CONNECT_BOOTSTRAP_SERVERS: kafka:9092
       CONNECT_REST_ADVERTISED_HOST_NAME: connect
@@ -104,7 +104,7 @@ services:
     image: prom/pushgateway:v1.9.0
     container_name: pushgateway
     ports:
-      - "9091:9091"
+      - "127.0.0.1:9091:9091"
 
   prometheus:
     image: prom/prometheus:v2.53.0
@@ -112,7 +112,7 @@ services:
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
 
   grafana:
     image: grafana/grafana:11.1.0
@@ -123,7 +123,7 @@ services:
       - ./grafana/provisioning:/etc/grafana/provisioning
       - ./grafana/dashboards:/var/lib/grafana/dashboards
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
 
 volumes:
   seaweed-data:
