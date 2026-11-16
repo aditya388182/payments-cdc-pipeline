@@ -93,6 +93,7 @@ services:
       S3_BUCKET: payments-lake
     volumes:
       - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+      - seaweed-data:/data   # keeps the lake across container re-creation (the old MinIO service had no volume)
     ports:
       - "127.0.0.1:9000:9000"
     healthcheck:
@@ -123,3 +124,6 @@ services:
       - ./grafana/dashboards:/var/lib/grafana/dashboards
     ports:
       - "3000:3000"
+
+volumes:
+  seaweed-data:

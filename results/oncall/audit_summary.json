@@ -1,7 +1,7 @@
 {
-  "commit": "76edd81",
+  "commit": "320ed1e",
   "dirty": true,
-  "generated_at_utc": "2026-11-16T06:22:20Z",
+  "generated_at_utc": "2026-11-16T08:42:47Z",
   "command": "python oncall/tools/audit.py",
   "rows": [
     {
@@ -123,6 +123,13 @@
     "pytest_passed": 23,
     "skew_rerun_naive_max_over_min": 7.86,
     "skew_rerun_salted_max_over_min": 2.18,
-    "skew_rerun_reduction_pct": 72.3
+    "skew_rerun_reduction_pct": 72.3,
+    "skew_screenshot_naive_min": 346,
+    "skew_screenshot_naive_max": 5667,
+    "skew_screenshot_salted_min": 935,
+    "skew_screenshot_salted_max": 2776,
+    "skew_screenshot_naive_ratio": 16.378612716763005,
+    "skew_screenshot_salted_ratio": 2.968983957219251,
+    "skew_screenshot_reduction_pct": 81.87279955535803
   }
 }

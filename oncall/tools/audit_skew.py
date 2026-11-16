@@ -21,6 +21,7 @@ from provenance import REPO, write_result  # noqa: E402
 PY = str(REPO / "venv" / "bin" / "python")
 ENV = {**os.environ, "PYTHONPATH": str(REPO)}
 ENV.pop("PYSPARK_SUBMIT_ARGS", None)
+ENV["PYSPARK_PYTHON"] = ENV["PYSPARK_DRIVER_PYTHON"] = sys.executable  # workers must match the driver (box default python is 3.12)
 ENV["PYTHONUNBUFFERED"] = "1"
 
 

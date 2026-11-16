@@ -185,6 +185,10 @@ write_result("audit_summary.json", "python oncall/tools/audit.py", {
     "rows": [{k: r[k] for k in ("num", "claim", "exists", "runs", "tested", "verdict", "action")} for r in rows],
     "resume_changes": [{"as_written": a, "problem": b, "new_wording": c} for a, b, c in resume],
     "numbers": {"driver_kill_rows_postgres": n["Postgres rows"], "driver_kill_rows_delta": n["Delta live rows"], "pytest_passed": base["checks"]["pytest"].get("passed"),
-                "skew_rerun_naive_max_over_min": nv["max_over_min"], "skew_rerun_salted_max_over_min": sl["max_over_min"], "skew_rerun_reduction_pct": skew["reduction_pct"]},
+                "skew_rerun_naive_max_over_min": nv["max_over_min"], "skew_rerun_salted_max_over_min": sl["max_over_min"], "skew_rerun_reduction_pct": skew["reduction_pct"],
+                # transcribed by eye from the committed Spark UI screenshots (07_skew_before.png: 346 .. 5667; 08_skew_after.png: 935 .. 2776)
+                "skew_screenshot_naive_min": 346, "skew_screenshot_naive_max": 5667, "skew_screenshot_salted_min": 935, "skew_screenshot_salted_max": 2776,
+                "skew_screenshot_naive_ratio": 5667 / 346, "skew_screenshot_salted_ratio": 2776 / 935,
+                "skew_screenshot_reduction_pct": (5667 / 346 - 2776 / 935) / (5667 / 346) * 100},
 })
 print("wrote", AUDIT_MD)

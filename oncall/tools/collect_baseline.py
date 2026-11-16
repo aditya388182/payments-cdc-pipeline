@@ -17,6 +17,7 @@ from provenance import REPO, RESULTS_DIR, write_result  # noqa: E402
 
 ENV = {**os.environ, "PYTHONPATH": str(REPO)}
 ENV.pop("PYSPARK_SUBMIT_ARGS", None)
+ENV["PYSPARK_PYTHON"] = ENV["PYSPARK_DRIVER_PYTHON"] = sys.executable  # workers must match the driver (box default python is 3.12)
 
 CHECKS = {
     "pytest": ("python -m pytest spark/tests/ -v", 900),

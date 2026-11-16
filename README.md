@@ -55,7 +55,7 @@ Application / scripts/data_generator.py
         │                 + payments.transactions.dlq
         ▼
  Confluent Schema Registry   subject: payments.public.transactions-value
-        │                     compatibility: BACKWARD_TRANSITIVE
+        │                     compatibility: BACKWARD (registry default; see docs/oncall/AUDIT.md row 8)
         ▼
  ┌─────────────────────────────────────────────────────────────┐
  │  PySpark 3.5 Structured Streaming  (foreachBatch, 10s)      │
@@ -94,7 +94,7 @@ Spark runs **on the host** as `local[2]`. Everything else is Docker Compose. Tha
 | **Source of truth** | PostgreSQL 15, logical replication (`pgoutput`) |
 | **CDC** | Debezium 2.5.4.Final (image **pinned** — `:latest` resolved to 3.x and failed to load on the Java 11 Connect image) |
 | **Transport** | Confluent Platform 7.6.1 / Apache Kafka 3.6, KRaft (no ZooKeeper) |
-| **Contracts** | Avro + Schema Registry, `BACKWARD_TRANSITIVE` |
+| **Contracts** | Avro + Schema Registry, `BACKWARD` (the live subject uses the registry default; nothing in the repo sets TRANSITIVE) |
 | **Stream processing** | PySpark 3.5 Structured Streaming, `foreachBatch` |
 | **Lakehouse** | Delta Lake 3.1.0 on MinIO (S3A), Change Data Feed on |
 | **Quality gate** | In-process validator + Kafka DLQ (GE monitor is post-commit, not a write-path gate) |
@@ -106,7 +106,7 @@ Spark runs **on the host** as `local[2]`. Everything else is Docker Compose. Tha
 
 ## Key Highlights
 
-- Built an end-to-end **Postgres → Debezium → Kafka → Spark → Delta** payments ledger with a measured **`PARITY: PASS` of 100,812 = 100,812** live rows (2026-08-31).
+- Built an end-to-end **Postgres → Debezium → Kafka → Spark → Delta** payments ledger with `PARITY: PASS` after a hard driver kill and restart. (The original 100,812 = 100,812 figure of 2026-08-31 has no committed parity output; the audit reran the failure test on a clean box, numbers in the On-Call section and `docs/oncall/AUDIT.md` row 2.)
 - Implemented **exactly-once as two cooperating mechanisms**, not a slogan: an LSN monotonicity predicate on `MERGE`, and a durable `_batch_ledger` so a replayed `batch_id` is a no-op.
 - Chose a **soft-delete / tombstone policy** so a late-arriving update cannot resurrect a key the watermark already passed. Physical deletes would punch a hole in that watermark.
 - Flattened Debezium envelopes with **`coalesce(after, before)`** so `op='d'` rows keep their primary key when `after` is null.
@@ -135,7 +135,7 @@ Measured on an Ubuntu EC2 `t3.xlarge`, Spark `local[2]`, three Kafka partitions,
 
 | Metric | Value |
 | :-- | :-- |
-| **Live Postgres / Delta rows** | 100,812 = 100,812 (`PARITY: PASS`, 2026-08-31) |
+| **Live Postgres / Delta rows** | 100,812 = 100,812 on the original host, 2026-08-31 (**unverified**: no parity output committed); audit rerun: see the On-Call results table |
 | **Merchants in registry** | 20 |
 | **Generator mix** | ~70% INSERT / 20% UPDATE / 10% DELETE |
 | **Burst used in Day 6** | 20 tps × 15s → 300 ops (210 / 60 / 30) |
@@ -347,7 +347,7 @@ project_4_1/
 │       └── prometheus.yml               # honor_labels: true on Pushgateway
 ├── README.md
 ├── req.txt                              # pinned Python deps (not requirements.txt)
-├── runbooks/                            # present; populate with Day-6 runbook markdown if missing
+├── runbooks/                            # NOT in the repo (the four files named below were never committed)
 ├── schemas/
 │   └── transactions_v2.avsc             # live subject dump — not transactions_v1.avsc
 ├── screenshots/                         # repo-root, not docs/screenshots/
@@ -543,7 +543,7 @@ Not in this tree (do not invent captions for missing files): `09_dlq_message.png
 
 ## Runbooks
 
-The `runbooks/` directory exists in this tree. The four operational notes written during Day 6 are:
+The `runbooks/` directory is **not** in this tree (audit: docs/oncall/AUDIT.md row 10). The four operational notes written during Day 6 were meant to be:
 
 - Lag climbing on all partitions → `runbooks/lag_rising.md`
 - Lag spread huge (one hot partition) → `runbooks/hot_partition.md`
@@ -593,6 +593,93 @@ cd infra && docker compose down -v && cd ..
 - [ ] Check the four Day-6 runbook files into `runbooks/` if this clone only has the empty directory.
 - [ ] Replace host-network Pushgateway with a remote-write path and proper service discovery.
 - [ ] Derive the CI proposed schema from the code rather than a checked-in file, so the gate fires on every PR without leaving a breaking file in the default branch.
+
+---
+
+## On-Call Console: Go service, gRPC replay, Expo app
+
+An on-call engineer opens a phone app and sees this pipeline live: throughput, consumer lag, freshness and source-versus-lake parity, pushed every 2 seconds. When something breaks they get an alert, inspect the dead-lettered records and replay them safely. Every action is audited, and replaying a record twice still writes one row.
+
+![On-call console demo](docs/oncall/demo.gif)
+
+The screens (Expo web build driven by Playwright; every screen is in [`docs/oncall/screenshots/`](docs/oncall/screenshots/)): login, live charts, alerts, DLQ list and record detail, replay confirmation and result, audit log, settings.
+
+```text
+ Postgres ──Debezium──► Kafka ──► Spark Structured Streaming ──► Delta Lake (S3-compatible: SeaweedFS)
+   ▲                      │        validator → DLQ topic / MERGE (LSN guard, batch ledger)
+   │ load generator       │        └─(after the ledger commit, observability only)─► topic pipeline.progress
+   │ (started by the API) ▼
+   │              topic payments.public.transactions ◄─── re-publish (the normal validated path)
+   │                                              ▲
+   │                                  replay-svc (Python, gRPC server)
+   │                                    Replay · ListDlq · GetDlq · LakeStats · DlqStats
+   │                                    reuses the existing validator and producer helpers
+   │                                              ▲ gRPC (Protocol Buffers): deadline per call, retry only on UNAVAILABLE
+ oncall-api (Go: chi, pgx) ───────────────────────┘
+   │ collectors: Kafka lag (kadm) · connector status · pipeline.progress consumer · source count (pgx) · LakeStats / DlqStats (gRPC)
+   │ → one snapshot every 2 s → hub → a bounded channel per client → WebSocket clients (seq + epoch resume)
+   │ alert engine → push sender (Expo push API | fake) · audit log + idempotency keys (Postgres) · /metrics on a separate loopback port
+   ▼
+ Expo app (React Native, TypeScript strict) ◄── WebSocket /v1/live, REST /v1/*, GitHub OAuth 2.0 with PKCE
+```
+
+**What it proves.** *Software engineering:* a Go WebSocket hub where every client has its own bounded buffer (a slow phone is dropped and reconnects with its last `seq`, it never slows the others); gRPC between Go and Python; OAuth 2.0 with PKCE, an allow-list, admin/viewer roles and rotating refresh tokens with reuse detection; admin actions that need an `Idempotency-Key` and write an audit row; race-detector tests; a k6 load test. *Data engineering:* replay goes back through the same validator and the LSN guard makes the second replay a no-op (proven by a test that also publishes the record to Kafka a second time); parity is lag-aware (`in sync` / `catching up`, and `mismatch` only after the stream has drained); an Avro BACKWARD compatibility gate and a `buf` gate in CI.
+
+### Run it
+
+```bash
+make env            # generate a git-ignored .env with random local dev values (never printed)
+make oncall-up      # data plane (docker compose), Spark job, replay-svc, mock GitHub, Go API; everything binds to 127.0.0.1
+make oncall-e2e     # Playwright on the Expo web build with the mock OAuth server; writes screenshots and results/oncall/e2e.json
+make ws-load        # k6: 1,000 WebSocket clients, then the slow-client variant; writes results/oncall/ws_load.json
+make bullets        # resume bullets with numbers read from results/oncall/*.json
+```
+
+Tunnel `8088` (API) to use the app from your laptop; see [`docs/oncall/DONE.md`](docs/oncall/DONE.md) for ports and the rest.
+
+### Results (generated, not typed)
+
+<!-- oncall:numbers:start -->
+| Measure | Value | Source |
+|---|---|---|
+| Rows matched after a driver kill (parity checker rerun, this box) | 2,924 of 2,924 | `results/oncall/audit_driver_kill.json` |
+| Existing pipeline pytest tests | 23 | `results/oncall/tests.json` |
+| Skew, max-to-min task records (committed Spark UI screenshots) | 16.4x to 3.0x (82% cut) | `results/oncall/audit_summary.json` |
+| Skew rerun on a smaller dataset (salted aggregation) | 7.9x to 2.2x (72% cut) | `results/oncall/audit_summary.json` |
+| Same DLQ record replayed twice | APPLIED then ALREADY_APPLIED | `results/oncall/replay_test.json` |
+| Lake rows for that key (after both replays and a direct duplicate publish to Kafka) | 1 | `results/oncall/replay_test.json` |
+| Audit rows for the two replays | 2 | `results/oncall/replay_test.json` |
+| WebSocket clients established / failed (k6, local, 1,000 target) | 1,000 / 0 | `results/oncall/ws_load.json` |
+| Snapshots received / expected for the time each client was connected (median, min) | 1.00 / 1.00 (median client received 166) | `results/oncall/ws_load.json` |
+| Delivery latency p50 / p95 / p99 (ms) | 24.0 / 48.0 / 73.0 | `results/oncall/ws_load.json` |
+| Unexpected disconnects / out-of-order frames | 0 / 0 | `results/oncall/ws_load.json` |
+| Server peak RSS (MB) / average CPU cores during the hold | 112.0 / 0.05 | `results/oncall/ws_load.json` |
+| Slow-client run: slow readers closed by the server | 100 | `results/oncall/ws_load.json` |
+| Slow-client run: fast clients' delivery p95 / p99 (ms) vs baseline | 44.0 / 78.0 vs 48.0 / 73.0 | `results/oncall/ws_load.json` |
+| Avro gate: breaking fixtures rejected / compatible accepted | 3 of 3 / 3 of 3 | `results/oncall/schema_gate.json` |
+| New pytest tests (replay-svc, progress events, schema gate) | 46 | `results/oncall/tests.json` |
+| Go tests under the race detector | 121 | `results/oncall/tests.json` |
+| Jest tests | 60 | `results/oncall/tests.json` |
+| Playwright end-to-end tests (Expo web build, mock GitHub) | 7 of 7 | `results/oncall/e2e.json` |
+| Screenshots captured | 17 | `results/oncall/e2e.json` |
+
+Load test label: local load test: clients and server on the same box (loopback), not a production measurement. Instance type: t3.2xlarge (8 vCPUs). Generated by `oncall/tools/readme_numbers.py`.
+<!-- oncall:numbers:end -->
+
+### Testing approach
+
+- **Go** (`oncall/api`): `go test -race ./...` with goleak. The hub is tested with many clients, a stalled client, `seq` resume, ping/pong timeouts; auth against a mock GitHub server (PKCE mismatch, state mismatch, allow-list, roles, refresh rotation, **reuse of an old refresh token revokes the family**, expired tokens); admin routes (missing `Idempotency-Key` is 400, a repeated key returns the first result, a rate above the cap is 422, every admin action writes an audit row); the gRPC client over `bufconn`; parity and alert-engine rules; Postgres integration tests (migrations, audit, devices, atomic code/refresh consumption under concurrency).
+- **Python** (`oncall/replay/tests`): an in-process gRPC server with fakes for the lake, DLQ, validator and publisher; the Spark progress-event publisher; the schema gate. The pipeline's own 23 tests are unchanged and rerun after every pipeline-side change, together with the exactly-once replay check.
+- **Mobile**: Jest + React Native Testing Library (WebSocket reconnect with `seq`, single-flight token refresh, replay confirmation and result states, role-based hiding), then Playwright on the web build against the live stack.
+- **Gates**: `buf lint` + `buf breaking`, the Avro compatibility gate with failing and passing fixtures, `actionlint` on the workflow.
+
+### Limits (stated plainly)
+
+- The WebSocket load test is local: clients and server share one box, so it measures the hub and loopback, not a network; no throughput number is claimed.
+- Push delivery and the real GitHub login are **only verified on a phone** (docs/oncall/BLOCKERS.md). Until then: tested with a fake push sender and a mock OAuth server.
+- The drained parity check compares row counts (minus quarantined keys that really exist in Postgres); `scripts/parity_checker.py` remains the key-and-value proof.
+- The object store is SeaweedFS because MinIO's images are gone (docs/oncall/DECISIONS.md D-001). The Spark job's merchant cache (120 s) can re-quarantine a record replayed right after fixing the reference data; replay reports it (D-010).
+- Audit corrections to the sections above, with evidence: docs/oncall/AUDIT.md (for example the registry's compatibility level is `BACKWARD`, not `BACKWARD_TRANSITIVE`; the four runbook files are not in the repo; the 100,812-row figure has no committed parity output behind it).
 
 ---
 

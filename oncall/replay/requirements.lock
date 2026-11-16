@@ -72,6 +72,8 @@ kafka-python==3.0.13
     # via -r oncall/replay/../../req.txt
 packaging==26.3
     # via pytest
+pillow==12.3.0
+    # via -r oncall/replay/requirements.in
 pluggy==1.7.0
     # via pytest
 protobuf==7.36.2

@@ -18,6 +18,7 @@ from provenance import REPO, RESULTS_DIR, write_result  # noqa: E402
 PY = str(REPO / "venv" / "bin" / "python")
 ENV = {**os.environ, "PYTHONPATH": str(REPO)}
 ENV.pop("PYSPARK_SUBMIT_ARGS", None)
+ENV["PYSPARK_PYTHON"] = ENV["PYSPARK_DRIVER_PYTHON"] = sys.executable  # workers must match the driver (box default python is 3.12)
 LOG = REPO / "logs" / "spark_job_driverkill.log"
 
 

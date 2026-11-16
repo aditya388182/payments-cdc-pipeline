@@ -68,3 +68,33 @@ Re-read this file first if context is lost. Branch: `feat/oncall-console`. Stack
 **Interview notes**: why PKCE when the server holds the secret; what refresh-token reuse detection catches (a token stolen before rotation); why the code is consumed before the verifier check; why only hashes are stored; what a stolen access token can still do (until expiry) and why that is acceptable here.
 
 **Next**: Phase 4 (Expo app, Jest, Playwright on the web build, screenshots).
+
+## Phase 4: Expo app, Jest, Playwright on the web build: DONE
+**Done**
+- `oncall/mobile/` (Expo SDK 58, React Native 0.88, expo-router, TypeScript strict, ESLint `no-explicit-any`): six screens (Login; Live with throughput/lag charts, freshness, connector, parity badge and a reconnect indicator; Alerts with acknowledge; DLQ list with reason filter and paging plus record detail and a replay confirmation sheet with APPLIED / ALREADY_APPLIED / STILL_INVALID / PENDING results; Audit for admins; Settings with push switch, user, role, sign out). Tokens in `expo-secure-store` on a phone (sessionStorage on the web build only); native modules are required lazily so the web build and Jest never load them. `DELETE /v1/devices` was added to the API for the push switch.
+- `oncall/e2e/run.sh` / `make oncall-e2e`: starts the stack, builds the web export, serves it on 19006 (8081 is the Schema Registry), runs Playwright against the live pipeline with the mock GitHub, writes `results/oncall/e2e.json` and screenshots.
+
+**Check output**
+- Jest: `60 passed` in 6 suites (WebSocket client reconnect with seq/epoch resume, single-flight token refresh, replay confirmation and result states, role-based hiding of Replay and the Audit tab, Live and Alerts screens, PKCE). `tsc --noEmit` and `eslint --max-warnings=0`: clean.
+- Playwright on the Expo web build against the real stack: **7 of 7 passed**, 17 screenshots in `docs/oncall/screenshots/` (login, mock GitHub, live, alerts firing/acknowledged, DLQ list and detail, viewer with no Replay, replay confirm/APPLIED/queue after/ALREADY_APPLIED, audit, live in sync with diff 0, settings, not-allow-listed). Flow proven: sign in with GitHub (mock, PKCE) -> open a DLQ record -> replay -> it leaves the queue -> an audit row appears; a viewer sees no Replay button and the API answers 403 directly.
+- Bugs found by this run (DECISIONS D-016, D-009): `Illegal invocation` on `window.fetch`; Spark `PYTHON_VERSION_MISMATCH` when started without the venv on PATH (also in replay-svc's validator); the web build on the Schema Registry's port.
+
+**Interview notes**: why a single-flight refresh (rotation + reuse detection); why the app resumes with seq+epoch; why viewers are hidden from Replay in the UI AND refused by the API.
+
+**Next**: Phase 5 (schema gate, buf, CI, k6).
+
+## Phase 5: schema gate, buf, CI jobs, k6: DONE
+**Done**
+- `scripts/check_schema_compat.py` (BACKWARD gate, local Avro engine + Schema Registry engine, fails closed; names the field in its message), `schemas/transactions_v2.avsc` regenerated from the live registry (it was 0 bytes), fixtures in `schemas/fixtures/`. `buf lint` / `buf breaking` gate and `oncall/tools/proto_gate.py`. `.github/workflows/oncall-ci.yml` (go, replay, pipeline, proto, schema-gate, mobile). `oncall/loadtest/ws.js` + `make ws-load`.
+
+**Check output**
+- Schema gate (`results/oncall/schema_gate.json`, both engines agree): breaking fixtures rejected **3 of 3** (rename `currency`->`ccy`, `amount_minor` long->string, new field without a default), compatible accepted **3 of 3**; example message: `Value.ccy: field added WITHOUT a default; messages written before the change have no value for it (together with the removal of 'currency' this looks like a rename 'currency' -> 'ccy')`. SPEC fact corrected: a removed field is compatible under BACKWARD (D-017).
+- Proto gate (`results/oncall/proto_gate.json`): lint rc 0; breaking vs the first proto commit rc 0; a deliberately broken copy rejected (rc 100).
+- `actionlint .github/workflows/oncall-ci.yml`: clean. Every job fits a hosted runner; the end-to-end run and k6 stay local (D-018).
+- k6 (`results/oncall/ws_load.json`, local, t3.2xlarge, 8 vCPUs): **1000 clients established, 0 failed**, 0 unexpected disconnects, 0 out-of-order frames, delivery p50/p95/p99 = 24/48/73 ms, received/expected snapshots median 1; server peak 112.0 MB RSS and 0.053 cores. Slow-client variant: 100 slow readers closed by the server (median 84 s; by the ping timeout, see D-019) while the fast clients' p95/p99 were 44/78 ms vs 48/73 ms.
+- All suites (`results/oncall/tests.json`): existing pytest 23, new pytest 46, Go with `-race` 121, Jest 60, Playwright 7; 0 failed.
+- Pipeline regression: `after_final_pipeline_check.json` (23 pytest passed, parity PASS 12197 = 12197, replay proofs passed). The first run after the demos healed 71 quarantined rows and so tripped the replay script's own assertion (D-020).
+
+**Interview notes**: what breaks BACKWARD (and why a removed field does not); why the gate fails closed; why the slow-client drop needed a smaller socket buffer to show up in 5 minutes and what actually removed the slow clients.
+
+**Next**: Phase 6 is the user's (BLOCKERS.md). Phase 7: README, GIF, bullets, subagent review, DONE.md.
