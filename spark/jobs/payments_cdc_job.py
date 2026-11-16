@@ -29,6 +29,7 @@ from spark.utils.avro_deserializer import deserialize_by_schema_id
 from spark.utils.validator import validate
 from spark.utils.dlq_writer import write_to_dlq, merchants, get_merchant_registry
 from spark.utils.metrics_listener import extract_processed_offsets, push_metrics
+from spark.utils.progress_events import build_event, publish_progress
 
 logging.basicConfig(
     level=logging.INFO,
@@ -166,6 +167,39 @@ def _emit_metrics(
     )
 
 
+def _emit_progress(
+    committed: bool,
+    valid: "DataFrame | None",
+    batch_id: int,
+    n_in: int,
+    n_merged: int,
+    n_dlq: int,
+    batch_seconds: float,
+) -> None:
+    """Observability only (SPEC 7): runs strictly after the MERGE and the ledger commit, only when the
+    ledger row was really written (replay harnesses call with commit=False and emit nothing), and can
+    never raise into the batch."""
+    if not committed:
+        return
+    try:
+        max_ts = None
+        if valid is not None and n_merged > 0:
+            max_ts = valid.agg(F.max("source_ts").alias("m")).collect()[0]["m"]
+        publish_progress(
+            build_event(
+                app_id=APP_ID,
+                batch_id=batch_id,
+                input_rows=n_in,
+                merged_rows=n_merged,
+                dlq_rows=n_dlq,
+                duration_seconds=batch_seconds,
+                max_source_ts=max_ts,
+            )
+        )
+    except Exception as exc:
+        logger.warning("progress event skipped (%s: %s)", exc.__class__.__name__, exc)
+
+
 def process_batch(batch_df: DataFrame, batch_id: int, commit: bool = True) -> None:
     spark = batch_df.sparkSession
     t0 = time.time()
@@ -179,8 +213,9 @@ def process_batch(batch_df: DataFrame, batch_id: int, commit: bool = True) -> No
         n_in = batch_df.count()
         if n_in == 0:
             logger.info("batch_id=%s empty after deserialize – nothing to merge", batch_id)
-            commit_ledger(spark, batch_id, commit=commit)
+            committed = commit_ledger(spark, batch_id, commit=commit)
             _emit_metrics(batch_id, 0, 0, 0, time.time() - t0)
+            _emit_progress(committed, None, batch_id, 0, 0, 0, time.time() - t0)
             return
 
         valid, invalid = validate(batch_df, merchants())
@@ -190,8 +225,9 @@ def process_batch(batch_df: DataFrame, batch_id: int, commit: bool = True) -> No
             n_dlq = write_to_dlq(invalid)
             staged = dedup_latest(valid)
             n_merged = merge_batch(spark, staged)
-            commit_ledger(spark, batch_id, commit=commit)
+            committed = commit_ledger(spark, batch_id, commit=commit)
             _emit_metrics(batch_id, n_in, n_merged, n_dlq, time.time() - t0)
+            _emit_progress(committed, valid, batch_id, n_in, n_merged, n_dlq, time.time() - t0)
             logger.info(
                 "batch_id=%s finished – in=%d merged=%d dlq=%d",
                 batch_id,

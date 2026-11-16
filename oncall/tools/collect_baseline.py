@@ -36,13 +36,19 @@ def run(name: str, cmd: str, timeout: int) -> dict:
 
 
 def main() -> None:
-    only = sys.argv[1:] or list(CHECKS)
+    args = sys.argv[1:]
+    out = "baseline.json"
+    if "--out" in args:
+        i = args.index("--out")
+        out = args[i + 1]
+        del args[i : i + 2]
+    only = args or list(CHECKS)
     body = {name: run(name, *CHECKS[name]) for name in only}
     m = re.search(r"(\d+) passed", " ".join(body.get("pytest", {}).get("result_lines", [])))
     if m:
         body["pytest"]["passed"] = int(m.group(1))
-    write_result("baseline.json", "python oncall/tools/collect_baseline.py", {"stack": "existing pipeline, SeaweedFS in place of MinIO", "checks": body})
-    print("wrote results/oncall/baseline.json")
+    write_result(out, "python oncall/tools/collect_baseline.py " + " ".join(sys.argv[1:]), {"stack": "existing pipeline, SeaweedFS in place of MinIO" + ("" if out == "baseline.json" else " (re-run after a pipeline-side change)"), "checks": body})
+    print("wrote results/oncall/" + out)
 
 
 if __name__ == "__main__":

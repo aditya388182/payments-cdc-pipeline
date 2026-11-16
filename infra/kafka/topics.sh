@@ -19,5 +19,10 @@ $B --create --if-not-exists --topic payments.transactions.dlq \
 $B --create --if-not-exists --topic connect-dlq \
    --partitions 1 --replication-factor 1
 
+# Observability-only progress events (Spark publishes one JSON message per committed batch; nothing reads it)
+$B --create --if-not-exists --topic pipeline.progress \
+   --partitions 1 --replication-factor 1 \
+   --config retention.ms=86400000
+
 echo "--- Kafka topics created ---"
 $B --list

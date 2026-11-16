@@ -19,3 +19,19 @@ Re-read this file first if context is lost. Branch: `feat/oncall-console`. Stack
 **Interview notes**: why checkpointing is not exactly-once; why a ledger *and* an LSN guard; what an audit changes about a resume line.
 
 **Next**: Phase 1 (protos, replay-svc, Spark progress events).
+
+## Phase 1: protos, replay-svc, Spark progress events: DONE
+**Done**
+- `oncall/proto/oncall/v1/replay.proto` (buf lint + build clean): Replay, ListDlq, GetDlq, LakeStats. Generated Python in `oncall/replay/gen/` (Go stubs come in Phase 2).
+- `oncall/replay/`: gRPC server (`python -m oncall.replay.server`, loopback `127.0.0.1:50051`, health service, JSON logs, deadlines on every call). Reuses the repo's validator (via a local Spark session) and producer helpers; reads the lake with delta-rs; reads the DLQ topic with confluent_kafka. 29 pytest tests (in-process gRPC server + fakes) incl. replay-twice, still-invalid, deadline, re-quarantine.
+- Spark progress events: `spark/utils/progress_events.py` + a 3-line hook in `process_batch` after `commit_ledger`; topic `pipeline.progress` added to `infra/kafka/topics.sh`. Fail-open and commit-gated (`commit=False` emits nothing).
+
+**Check output**
+- `python -m pytest oncall/replay/tests`: 29 passed. Existing: `pytest spark/tests`: 23 passed.
+- Progress message on the topic (real): `{"app_id": "payments_cdc_v1", "batch_id": 25, "input_rows": 200, "merged_rows": 198, "dlq_rows": 0, "duration_seconds": 24.338, "max_source_ts": "2026-11-16T06:27:17.745000+00:00", "committed_at": "2026-11-16T06:27:49.806184+00:00"}`
+- After the pipeline change (`results/oncall/after_phase1_progress_events.json`): pytest 23 passed; parity PASS 4249 = 4249; `replay_offsets.py --mode both`: table unchanged (LSN guard held), ledger skip OK.
+- Live replay through gRPC: first `STILL_INVALID`, then (stale cache) `PENDING`, then `APPLIED`, then `ALREADY_APPLIED`; record left the open list.
+
+**Interview notes**: why replay goes through a service that reuses the validator instead of writing to Kafka/Delta from Go; why "applied" is derived from the LSN guard instead of a separate resolved-table; the stale merchant-cache race (D-010) as a real bug found by running it; fail-open progress events after the ledger commit.
+
+**Next**: Phase 2 (Go service: collectors, hub, REST, gRPC client, alerts, audit, generator, metrics).
