@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git push:*)",
+      "Bash(gh:*)",
+      "Bash(terraform apply:*)",
+      "Bash(terraform destroy:*)",
+      "Read(~/.config/oncall/**)",
+      "Bash(cat ~/.config/oncall:*)"
+    ]
+  }
+}
