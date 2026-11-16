@@ -1,0 +1,107 @@
+{
+  "commit": "49c0161",
+  "dirty": true,
+  "generated_at_utc": "2026-11-16T07:02:39Z",
+  "command": "python oncall/tools/replay_test.py",
+  "passed": true,
+  "transaction_id": "3001de0d-ba27-4f2e-9db9-d0065e9071b0",
+  "dlq_id": "110",
+  "first_replay_status": "APPLIED",
+  "second_replay_status": "ALREADY_APPLIED",
+  "repeat_same_key_returned_first_result": true,
+  "lake_rows_for_key_after_replays": 1,
+  "lake_rows_for_key_after_duplicate_publish": 1,
+  "lake_lsn": 38799424,
+  "record_lsn": 38799424,
+  "audit_rows_for_the_two_replays": 2,
+  "audit_rows_for_target_total": 3,
+  "steps": [
+    {
+      "step": "injected",
+      "transaction_id": "3001de0d-ba27-4f2e-9db9-d0065e9071b0",
+      "merchant": "MERCH_RT_8EED4"
+    },
+    {
+      "step": "dead_lettered",
+      "dlq_id": "110",
+      "lsn": 38799424,
+      "reason": "UNKNOWN_MERCHANT"
+    },
+    {
+      "step": "replay_before_fixing_reference_data",
+      "http": 422,
+      "status": "STILL_INVALID",
+      "detail": "validator still rejects the record: UNKNOWN_MERCHANT"
+    },
+    {
+      "step": "merchant_added_to_reference_table",
+      "merchant": "MERCH_RT_8EED4",
+      "waiting_s": 125,
+      "why": "pipeline merchant cache refreshes every 120 s (DECISIONS D-010)"
+    },
+    {
+      "step": "replay_1",
+      "key": "rt-first-3001de0d",
+      "http": 200,
+      "status": "APPLIED",
+      "detail": "validated, re-published to partition 2 offset 2855, lake now at lsn 38799424"
+    },
+    {
+      "step": "replay_2",
+      "key": "rt-second-3001de0d",
+      "http": 200,
+      "status": "ALREADY_APPLIED",
+      "detail": "lake already holds 3001de0d-ba27-4f2e-9db9-d0065e9071b0 at lsn 38799424 >= record lsn 38799424; nothing published"
+    },
+    {
+      "step": "replay_1_repeated_same_key",
+      "http": 200,
+      "status": "APPLIED",
+      "idempotent_replayed_header": "true"
+    },
+    {
+      "step": "lake_after_replays",
+      "rows": 1,
+      "lsns": [
+        38799424
+      ]
+    },
+    {
+      "step": "duplicate_published_directly_to_kafka",
+      "partition": 2,
+      "offset": 2856
+    },
+    {
+      "step": "stream_processed_the_duplicate",
+      "batch_id": 39,
+      "merged_rows": 1,
+      "end_offset": 2857
+    },
+    {
+      "step": "lake_after_duplicate",
+      "rows": 1,
+      "lsns": [
+        38799424
+      ]
+    },
+    {
+      "step": "audit_rows",
+      "total_for_target": 3,
+      "for_the_two_replays": 2,
+      "results": [
+        [
+          "rt-second-3001de0d",
+          "ALREADY_APPLIED"
+        ],
+        [
+          "rt-first-3001de0d",
+          "APPLIED"
+        ],
+        [
+          "rt-before-fix-3001de0d",
+          "STILL_INVALID"
+        ]
+      ]
+    }
+  ]
+}

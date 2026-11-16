@@ -35,3 +35,22 @@ Re-read this file first if context is lost. Branch: `feat/oncall-console`. Stack
 **Interview notes**: why replay goes through a service that reuses the validator instead of writing to Kafka/Delta from Go; why "applied" is derived from the LSN guard instead of a separate resolved-table; the stale merchant-cache race (D-010) as a real bug found by running it; fail-open progress events after the ledger commit.
 
 **Next**: Phase 2 (Go service: collectors, hub, REST, gRPC client, alerts, audit, generator, metrics).
+
+## Phase 2: Go service (collectors, hub, REST, gRPC client, alerts, audit, generator, metrics): DONE
+**Done**
+- `oncall/api/` (module `github.com/aditya388182/payments-cdc-pipeline/oncall/api`, chi, pgx, coder/websocket, grpc-go, franz-go/kadm, prometheus, golang-jwt). `internal/`: `hub` (per-client bounded channels, seq/epoch resume, ping/pong), `collect` (state builder + Kafka lag / Connect / progress-event / source-count / lake / DLQ collectors), `snapshot` (types, parity badge, percentiles), `alerts` (rules with durations, dedup, ack, resolve, one push per state change), `push` (fake JSONL sender, Expo sender), `replayclient` (deadline per call, retries only on UNAVAILABLE), `store` (embedded migrations, audit, alerts, devices, idempotency keys), `generator` (controls scripts/data_generator.py), `api` (all routes of the SPEC table, JSON errors, 401/403, idempotency, audit), `metrics`. `cmd/oncall-api` also has `token` to mint dev tokens until the OAuth flow lands in Phase 3.
+- Protos grew `DlqStats` and `open_missing_keys`; replay-svc has 34 pytest tests.
+- Spark progress events now also carry exact per-partition `end_offsets` (D-011).
+
+**Check output**
+- `go vet`, `gofmt -l`, `staticcheck`: clean. `go test -race -count=1 ./...` (with the compose Postgres): every package ok, 85+ tests, no skips; goleak in hub, replayclient and generator.
+- Live capture, one snapshot per 2 s over the WebSocket (`results/oncall/ws_capture_phase2.jsonl`, 31 snapshots in 60 s while the admin API ran the generator at 20/s): e.g. `seq 6 lag 165 in 16.51/s parity catching_up`, `seq 14 lag 383 in 20.36/s out 3.33/s p95 21.36 parity in_sync diff 210`, and back to `in_sync diff 0` once drained.
+- API walkthrough: viewer start generator -> 403; rate 5000 -> 422 `rate_out_of_range`; admin start 20/s -> 200; stop -> 200.
+- `results/oncall/replay_test.json` (`python oncall/tools/replay_test.py`, real stack, real API): STILL_INVALID before the merchant exists; after adding it and waiting out the 120 s cache: replay 1 `APPLIED`, replay 2 `ALREADY_APPLIED`, same key again returned the first result with `Idempotent-Replayed: true`; **1 lake row** for the key (LSN 38799424 unchanged) even after the same envelope was published to Kafka a second time directly and the stream processed it (batch 39); audit rows for the two replays: 2 (3 for the target including the earlier STILL_INVALID attempt).
+- Pipeline regression after the Spark change: 23 pytest passed, PARITY: PASS 5038 = 5038, replay proofs passed (`results/oncall/after_phase2_progress_offsets.json`).
+
+**Bugs found by running things**: lag stuck at 1 (Pushgateway one batch stale, D-011); parity `mismatch -1` from a rogue DLQ record (D-012); the stale merchant cache (D-010, Phase 1); coder/websocket behaviours in D-013; `RealIP` (staticcheck). The race detector found no data race in the final suite.
+
+**Interview notes**: the hub's non-blocking fan-out and why a full buffer means "drop", not "wait"; what `seq` + `epoch` guarantee on resume (no gap, no duplicate, alerts before the snapshot in seq order; a restart changes the epoch so the client starts fresh); why parity says `catching_up` instead of crying wolf and why `mismatch` needs a drained stream; why lag could not come from a consumer group.
+
+**Next**: Phase 3 (GitHub OAuth with PKCE against a mock, allowlist/admin, rotating refresh tokens with reuse detection).

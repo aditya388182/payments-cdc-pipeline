@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Optional, Protocol
+from typing import Iterable, Optional, Protocol
 
 
 @dataclass(frozen=True)
@@ -80,6 +80,12 @@ class DlqStore(Protocol):
     def message_count(self) -> int: ...
 
     def end_offset(self) -> int: ...
+
+
+class SourceKeys(Protocol):
+    def present(self, keys: "Iterable[str]") -> set[str]:
+        """The subset of `keys` that exist as rows in the source database."""
+        ...
 
 
 class RecordValidator(Protocol):

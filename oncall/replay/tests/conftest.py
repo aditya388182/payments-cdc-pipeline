@@ -65,6 +65,14 @@ class FakeValidator:
         return list(self._reasons)
 
 
+class FakeSource:
+    def __init__(self, keys):
+        self.keys = set(keys)
+
+    def present(self, keys):
+        return set(keys) & self.keys
+
+
 class FakePublisher:
     """Publishing 'applies' the record to the fake lake after `delay` seconds, like the stream would."""
 
@@ -112,11 +120,11 @@ class Harness:
 def make_harness():
     made = []
 
-    def make(entries, lake=None, validator=None, publisher_kwargs=None, apply_wait_s=3.0):
+    def make(entries, lake=None, validator=None, publisher_kwargs=None, apply_wait_s=3.0, source=None):
         lake = lake or FakeLake()
         pub = FakePublisher(lake, **(publisher_kwargs or {}))
         val = validator or FakeValidator()
-        svc = ReplayServicer(lake, FakeDlq(entries), val, pub, apply_wait_s=apply_wait_s, poll_s=0.05)
+        svc = ReplayServicer(lake, FakeDlq(entries), val, pub, apply_wait_s=apply_wait_s, poll_s=0.05, source=source)
         h = Harness(svc)
         h.servicer_dlq = svc._dlq
         made.append(h)

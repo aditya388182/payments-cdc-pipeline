@@ -18,6 +18,7 @@ from .dlq import KafkaDlq
 from .lake import DeltaLake
 from .publisher import AvroCdcPublisher
 from .service import ReplayServicer
+from .source import PostgresSourceKeys
 from .validation import SparkRecordValidator
 
 log = logging.getLogger("replay.server")
@@ -40,6 +41,7 @@ def build_servicer() -> tuple[ReplayServicer, SparkRecordValidator]:
         dlq=KafkaDlq(bootstrap, os.environ.get("ONCALL_DLQ_TOPIC", "payments.transactions.dlq")),
         validator=validator,
         publisher=AvroCdcPublisher(),
+        source=PostgresSourceKeys(),
     )
     return servicer, validator
 

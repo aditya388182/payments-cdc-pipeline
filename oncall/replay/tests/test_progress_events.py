@@ -34,7 +34,8 @@ def test_event_has_the_fields_the_spec_lists():
     ev = pe.build_event(app_id="a", batch_id=7, input_rows=10, merged_rows=8, dlq_rows=2, duration_seconds=1.23456,
                         max_source_ts=datetime(2026, 11, 16, 1, 2, 3), committed_at=datetime(2026, 11, 16, 1, 2, 9, tzinfo=timezone.utc))
     assert ev == {"app_id": "a", "batch_id": 7, "input_rows": 10, "merged_rows": 8, "dlq_rows": 2, "duration_seconds": 1.235,
-                  "max_source_ts": "2026-11-16T01:02:03+00:00", "committed_at": "2026-11-16T01:02:09+00:00"}
+                  "max_source_ts": "2026-11-16T01:02:03+00:00", "committed_at": "2026-11-16T01:02:09+00:00",
+                  "end_offsets": None}
 
 
 def test_publish_goes_to_the_progress_topic_and_reports_ack():
@@ -77,3 +78,40 @@ def test_emit_progress_publishes_after_a_real_commit(monkeypatch):
     monkeypatch.setattr(job, "publish_progress", lambda ev: calls.append(ev))
     job._emit_progress(True, None, 9, 4, 3, 1, 2.0)
     assert calls and calls[0]["batch_id"] == 9 and calls[0]["merged_rows"] == 3 and calls[0]["dlq_rows"] == 1
+
+
+def test_event_carries_exclusive_end_offsets_per_partition():
+    ev = pe.build_event(app_id="a", batch_id=3, input_rows=1, merged_rows=1, dlq_rows=0, duration_seconds=0.1,
+                        max_source_ts=None, end_offsets={"0": 2325, "2": 2354})
+    assert ev["end_offsets"] == {"0": 2325, "2": 2354}
+
+
+def test_emit_progress_reports_offsets_from_the_raw_batch_after_commit(monkeypatch):
+    class Row(dict):
+        pass
+
+    class Grouped:
+        def agg(self, *_):
+            return self
+
+        def collect(self):
+            return [Row(partition=0, m=2324), Row(partition=2, m=2353)]
+
+    class RawBatch:
+        def groupBy(self, *_):
+            return Grouped()
+
+    calls = []
+    monkeypatch.setattr(job, "publish_progress", lambda ev: calls.append(ev))
+    monkeypatch.setattr(job, "_RAW_BATCH", RawBatch())
+    monkeypatch.setattr(job.F, "max", lambda c: type("C", (), {"alias": lambda self, n: n})())
+    job._emit_progress(True, None, 9, 4, 3, 1, 2.0)
+    assert calls[0]["end_offsets"] == {"0": 2325, "2": 2354}
+
+
+def test_no_offsets_when_there_is_no_raw_batch(monkeypatch):
+    calls = []
+    monkeypatch.setattr(job, "publish_progress", lambda ev: calls.append(ev))
+    monkeypatch.setattr(job, "_RAW_BATCH", None)  # replay harnesses never set it
+    job._emit_progress(True, None, 9, 4, 3, 1, 2.0)
+    assert calls[0]["end_offsets"] is None

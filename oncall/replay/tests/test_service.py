@@ -6,7 +6,7 @@ import pytest
 
 from oncall.v1 import replay_pb2 as pb
 
-from conftest import FakeLake, FakeValidator, entry
+from conftest import FakeLake, FakeSource, FakeValidator, entry
 
 
 def replay(h, dlq_id, key="k1", by="tester", timeout=20):
@@ -101,6 +101,8 @@ def test_list_open_only_reason_filter_and_paging(make_harness):
     assert [r.id for r in page2.records] == ["8"]
     assert page2.next_cursor == ""
     assert page2.topic_messages == 10
+    assert page2.open_total == 9, "10 records, one already applied"
+    assert page2.open_missing_keys == 9, "every open record's key is absent from the lake"
     with_applied = h.stub.ListDlq(pb.ListDlqRequest(limit=50, include_applied=True))
     assert len(with_applied.records) == 10
     assert [r.applied for r in with_applied.records][:2] == [True, False]
@@ -169,3 +171,21 @@ def test_pipeline_requarantine_is_reported_immediately_not_after_the_full_wait(m
     assert r.status == pb.REPLAY_STATUS_PENDING
     assert "quarantined it again" in r.detail and "UNKNOWN_MERCHANT" in r.detail
     assert time.monotonic() - t0 < 5
+
+
+def test_dlq_stats_counts_open_and_missing_keys(make_harness):
+    entries = [entry(0, tid="a"), entry(1, tid="b"), entry(2, tid="b"), entry(3, tid="c", lsn=50)]
+    h, *_ = make_harness(entries, lake=FakeLake({"c": 50, "a": 10}))  # c applied; a present but older than the record
+    s = h.stub.DlqStats(pb.DlqStatsRequest())
+    assert s.topic_messages == 4
+    assert s.open_total == 2, "a (lake lsn 10 < 100) and b; the two b entries share key+lsn"
+    assert s.open_missing_keys == 1, "only b is absent from the lake; a exists with an older version"
+
+
+def test_open_missing_keys_only_counts_keys_that_exist_in_the_source(make_harness):
+    # a rogue message (key not in Postgres) and a row deleted since do not explain a missing lake row
+    entries = [entry(0, tid="real-1"), entry(1, tid="rogue", reason="INVALID_UUID"), entry(2, tid="gone")]
+    h, *_ = make_harness(entries, source=FakeSource({"real-1"}))
+    s = h.stub.DlqStats(pb.DlqStatsRequest())
+    assert s.open_total == 3, "all three records are still open in the DLQ"
+    assert s.open_missing_keys == 1, "but only real-1 is a Postgres row the lake lacks"

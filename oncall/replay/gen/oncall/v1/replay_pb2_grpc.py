@@ -51,6 +51,11 @@ class ReplayServiceStub:
                 request_serializer=oncall_dot_v1_dot_replay__pb2.GetDlqRequest.SerializeToString,
                 response_deserializer=oncall_dot_v1_dot_replay__pb2.GetDlqResponse.FromString,
                 _registered_method=True)
+        self.DlqStats = channel.unary_unary(
+                '/oncall.v1.ReplayService/DlqStats',
+                request_serializer=oncall_dot_v1_dot_replay__pb2.DlqStatsRequest.SerializeToString,
+                response_deserializer=oncall_dot_v1_dot_replay__pb2.DlqStatsResponse.FromString,
+                _registered_method=True)
         self.LakeStats = channel.unary_unary(
                 '/oncall.v1.ReplayService/LakeStats',
                 request_serializer=oncall_dot_v1_dot_replay__pb2.LakeStatsRequest.SerializeToString,
@@ -84,6 +89,13 @@ class ReplayServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def DlqStats(self, request, context):
+        """DlqStats returns the DLQ topic size and open-record counts (cheap: cached per DLQ end offset and lake version).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def LakeStats(self, request, context):
         """LakeStats reads the Delta table (live row count, max LSN, last commit time).
         """
@@ -108,6 +120,11 @@ def add_ReplayServiceServicer_to_server(servicer, server):
                     servicer.GetDlq,
                     request_deserializer=oncall_dot_v1_dot_replay__pb2.GetDlqRequest.FromString,
                     response_serializer=oncall_dot_v1_dot_replay__pb2.GetDlqResponse.SerializeToString,
+            ),
+            'DlqStats': grpc.unary_unary_rpc_method_handler(
+                    servicer.DlqStats,
+                    request_deserializer=oncall_dot_v1_dot_replay__pb2.DlqStatsRequest.FromString,
+                    response_serializer=oncall_dot_v1_dot_replay__pb2.DlqStatsResponse.SerializeToString,
             ),
             'LakeStats': grpc.unary_unary_rpc_method_handler(
                     servicer.LakeStats,
@@ -198,6 +215,33 @@ class ReplayService:
             '/oncall.v1.ReplayService/GetDlq',
             oncall_dot_v1_dot_replay__pb2.GetDlqRequest.SerializeToString,
             oncall_dot_v1_dot_replay__pb2.GetDlqResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DlqStats(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/oncall.v1.ReplayService/DlqStats',
+            oncall_dot_v1_dot_replay__pb2.DlqStatsRequest.SerializeToString,
+            oncall_dot_v1_dot_replay__pb2.DlqStatsResponse.FromString,
             options,
             channel_credentials,
             insecure,

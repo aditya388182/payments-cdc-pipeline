@@ -46,6 +46,7 @@ def build_event(
     duration_seconds: float,
     max_source_ts: Optional[datetime],
     committed_at: Optional[datetime] = None,
+    end_offsets: Optional[dict] = None,
 ) -> dict:
     committed_at = committed_at or datetime.now(timezone.utc)
     if max_source_ts is not None and max_source_ts.tzinfo is None:
@@ -59,6 +60,8 @@ def build_event(
         "duration_seconds": round(float(duration_seconds), 3),
         "max_source_ts": max_source_ts.isoformat() if max_source_ts else None,
         "committed_at": committed_at.isoformat(),
+        # exclusive end offset per Kafka partition present in this batch (next offset to read)
+        "end_offsets": end_offsets,
     }
 
 

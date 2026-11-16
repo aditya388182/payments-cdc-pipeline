@@ -13,7 +13,7 @@ import grpc
 from oncall.v1 import replay_pb2 as pb
 from oncall.v1 import replay_pb2_grpc as pb_grpc
 
-from .models import DlqEntry, DlqStore, Lake, Publisher, PublishError, RecordValidator
+from .models import DlqEntry, DlqStore, Lake, Publisher, PublishError, RecordValidator, SourceKeys
 
 log = logging.getLogger("replay.service")
 
@@ -38,12 +38,15 @@ def _record(e: DlqEntry, applied: bool) -> pb.DlqRecord:
 
 class ReplayServicer(pb_grpc.ReplayServiceServicer):
     def __init__(self, lake: Lake, dlq: DlqStore, validator: RecordValidator, publisher: Publisher,
-                 apply_wait_s: float = APPLY_WAIT_S, poll_s: float = POLL_S) -> None:
+                 apply_wait_s: float = APPLY_WAIT_S, poll_s: float = POLL_S, source: SourceKeys | None = None) -> None:
         self._lake, self._dlq, self._validator, self._publisher = lake, dlq, validator, publisher
+        self._source = source
         self._apply_wait, self._poll = apply_wait_s, poll_s
         self._idem: "collections.OrderedDict[str, pb.ReplayResponse]" = collections.OrderedDict()
         self._idem_lock = threading.Lock()
         self._replay_lock = threading.Lock()  # one replay at a time: the validator session is shared
+        self._open_cache: tuple[int, int, int, int] | None = None  # (dlq_end, lake_version, open_total, open_missing_keys)
+        self._open_lock = threading.Lock()
 
     # -- helpers ---------------------------------------------------------------------------------
     @staticmethod
@@ -133,6 +136,33 @@ class ReplayServicer(pb_grpc.ReplayServiceServicer):
                 )
             time.sleep(self._poll)
 
+    def _open_counts(self) -> tuple[int, int]:
+        """(open records, distinct open keys missing from the lake). Cached per (DLQ end offset, lake version)."""
+        snap = self._lake.snapshot()
+        end = self._dlq.end_offset()
+        with self._open_lock:
+            if self._open_cache and self._open_cache[:2] == (end, snap.stats.delta_version):
+                return self._open_cache[2], self._open_cache[3]
+        seen: set[tuple[str, int]] = set()
+        missing: set[str] = set()
+        cursor = 0
+        while cursor < end:
+            entries, cursor, _end = self._dlq.scan(cursor, 1000)
+            if not entries:
+                break
+            for e in entries:
+                lsn = snap.lsns.get(e.transaction_id)
+                if lsn is None or lsn < e.lsn:
+                    seen.add((e.transaction_id, e.lsn))
+                    if lsn is None:
+                        missing.add(e.transaction_id)
+        if self._source is not None and missing:
+            # only keys that are real rows in the source explain a missing lake row (not rogue messages / deleted rows)
+            missing = self._source.present(missing)
+        with self._open_lock:
+            self._open_cache = (end, snap.stats.delta_version, len(seen), len(missing))
+        return len(seen), len(missing)
+
     def _requarantined(self, entry: DlqEntry, since_offset: int) -> str:
         """Reason string if the pipeline wrote a NEW DLQ message for this key after `since_offset`."""
         entries, _nxt, _end = self._dlq.scan(since_offset, 200)
@@ -185,7 +215,13 @@ class ReplayServicer(pb_grpc.ReplayServiceServicer):
             if cursor >= end:
                 break
         next_cursor = str(cursor) if cursor < end else ""
-        return pb.ListDlqResponse(records=out, next_cursor=next_cursor, topic_messages=self._dlq.message_count())
+        open_total, open_missing = self._open_counts()
+        return pb.ListDlqResponse(records=out, next_cursor=next_cursor, topic_messages=self._dlq.message_count(),
+                                  open_total=open_total, open_missing_keys=open_missing)
+
+    def DlqStats(self, request: pb.DlqStatsRequest, context: grpc.ServicerContext) -> pb.DlqStatsResponse:
+        open_total, open_missing = self._open_counts()
+        return pb.DlqStatsResponse(topic_messages=self._dlq.message_count(), open_total=open_total, open_missing_keys=open_missing)
 
     def LakeStats(self, request: pb.LakeStatsRequest, context: grpc.ServicerContext) -> pb.LakeStatsResponse:
         s = self._lake.snapshot().stats

@@ -48,6 +48,9 @@ APP_ID = "payments_cdc_v1"
 _LAST_COMMIT_TS: float = time.time()
 _LAST_PROCESSED_OFFSETS: Dict[str, int] = {}
 _QUERY = None
+# Observability side-channel: the raw Kafka batch currently being processed (set by foreach_batch_wrapper). It is read
+# only by _emit_progress AFTER the ledger commit, to report the exact per-partition end offsets.
+_RAW_BATCH: "DataFrame | None" = None
 
 
 def build_spark(app_name: str = "payments-cdc") -> SparkSession:
@@ -185,6 +188,11 @@ def _emit_progress(
         max_ts = None
         if valid is not None and n_merged > 0:
             max_ts = valid.agg(F.max("source_ts").alias("m")).collect()[0]["m"]
+        end_offsets = None
+        if _RAW_BATCH is not None:
+            # from the RAW batch so trailing Kafka tombstones (null values) still count; exclusive end = max + 1
+            rows = _RAW_BATCH.groupBy("partition").agg(F.max("offset").alias("m")).collect()
+            end_offsets = {str(r["partition"]): int(r["m"]) + 1 for r in rows}
         publish_progress(
             build_event(
                 app_id=APP_ID,
@@ -194,6 +202,7 @@ def _emit_progress(
                 dlq_rows=n_dlq,
                 duration_seconds=batch_seconds,
                 max_source_ts=max_ts,
+                end_offsets=end_offsets,
             )
         )
     except Exception as exc:
@@ -243,14 +252,17 @@ def process_batch(batch_df: DataFrame, batch_id: int, commit: bool = True) -> No
 
 
 def foreach_batch_wrapper(raw_batch: DataFrame, batch_id: int) -> None:
+    global _RAW_BATCH
     raw_batch.persist()
     try:
         if raw_batch.count() == 0:
             logger.info("batch_id=%s empty (no Kafka records) – skipping", batch_id)
             return
         flat = deserialize_by_schema_id(raw_batch)
+        _RAW_BATCH = raw_batch
         process_batch(flat, batch_id, commit=True)
     finally:
+        _RAW_BATCH = None
         raw_batch.unpersist()
 
 

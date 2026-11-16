@@ -13,6 +13,8 @@ service ReplayService {
   // ListDlq pages through records that are still open (not yet applied to the lake).
   rpc ListDlq(ListDlqRequest) returns (ListDlqResponse);
   rpc GetDlq(GetDlqRequest) returns (GetDlqResponse);
+  // DlqStats returns the DLQ topic size and open-record counts (cheap: cached per DLQ end offset and lake version).
+  rpc DlqStats(DlqStatsRequest) returns (DlqStatsResponse);
   // LakeStats reads the Delta table (live row count, max LSN, last commit time).
   rpc LakeStats(LakeStatsRequest) returns (LakeStatsResponse);
 }
@@ -79,6 +81,11 @@ message ListDlqResponse {
   string next_cursor = 2;
   // Number of messages in the DLQ topic (end offset minus start offset).
   int64 topic_messages = 3;
+  // Number of DLQ records still open (not applied to the lake), after in-topic duplicates are collapsed.
+  int64 open_total = 4;
+  // Distinct keys among the open records that are absent from the lake (rows Postgres has and the lake lacks
+  // because the validator quarantined them); the parity badge subtracts these.
+  int64 open_missing_keys = 5;
 }
 
 message GetDlqRequest {
@@ -100,4 +107,12 @@ message LakeStatsResponse {
   // RFC 3339 time of the latest commit to the Delta log.
   string last_commit_ts = 4;
   int64 delta_version = 5;
+}
+
+message DlqStatsRequest {}
+
+message DlqStatsResponse {
+  int64 topic_messages = 1;
+  int64 open_total = 2;
+  int64 open_missing_keys = 3;
 }
